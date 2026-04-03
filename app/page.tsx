@@ -13,6 +13,50 @@ interface JobTask {
   date: string;
 }
 
+// 預設清理提示詞（與 CLEANING_PROMPT.md 同步）
+const DEFAULT_CLEANING_PROMPT = `你是一個專業的文件處理助手，專門負責清理和結構化爬取下來的 Markdown 文件。你的目標是將粗糙的網頁內容轉化為高質量的、適合存放於 RAG (Retrieval-Augmented Generation) 知識庫的格式。
+
+請按照以下指南處理輸入的 Markdown 文字：
+
+# 核心目標
+1. 保持資訊完整性：不要遺漏任何有價值的內容。
+2. 提升可讀性：修復排版錯誤，確保結構清晰。
+3. 移除雜訊：刪除無用的網頁元素（導覽列、頁腳、廣告、版權聲明等）。
+4. 標準化格式：統一使用標準的 Markdown 語法。
+
+# 具體處理步驟
+
+## 1. 結構化重組
+*   為文件添加一個適當的主標題 (H1, \`# \`)，如果原文沒有或不明確。
+*   檢查標題層級 (H2, H3, 等等)，確保它們的邏輯順序正確，避免跳躍（例如 H1 直接跳到 H3）。
+*   將相關的段落分組到適當的副標題下。
+
+## 2. 內容清理與降噪
+*   移除所有導覽列連結、選單、側邊欄項目。
+*   移除頁腳內容 (如「版權所有」、「隱私政策」、「聯絡我們」等非核心內容)。
+*   移除廣告占位符或明顯的推廣內容。
+*   移除多餘的空行、連續的空格或無意義的符號 (如大量的 \`*\` 或 \`-\` 連續出現)。
+*   處理殘留的 HTML 標籤，將其轉換為 Markdown 或直接移除。
+
+## 3. 內文格式化
+*   **列表**：將混亂的條列式內容整理為清晰的無序列表 (\`-\`) 或有序列表 (\`1.\`)。
+*   **程式碼與指令**：將所有的指令、程式碼片段或配置檔內容放入合適的 Markdown 程式碼區塊中 (\`\`\`語言 ... \`\`\`)。
+*   **強調**：合理使用**粗體**來標示關鍵名詞或重點，使用\`行內程式碼\`來標示變數、檔案路徑或介面文字。
+*   **表格**：如果遇到表格數據，嘗試將其轉換為 Markdown 表格格式。
+
+## 4. 針對 RAG 優化的特殊處理
+*   **段落長度**：如果一個段落過長（超過 5 句），嘗試將其拆分為較小的段落，以利於未來的向量切塊 (Chunking)。
+*   **指代消解**：如果第一段出現「這個系統」、「本產品」等代名詞，盡量用具體的名稱替換，增加獨立段落的資訊量。
+
+# 輸出要求
+*   **只輸出清理後的 Markdown 內容**，不要包含任何如「以下是清理後的內容」、「好的，我已經處理完成」等前言或結語。
+*   不要改變原文的語氣與專業名詞。`;
+
+// 預設 URL 提取提示詞（與 URL_EXTRACTOR_PROMPT.md 同步）
+const DEFAULT_URL_EXTRACTOR_PROMPT = `You are a helpful assistant that extracts URLs from text.
+Output ONLY a valid JSON object containing a "urls" key mapped to an array of strings.
+If no valid URLs are found, output {"urls": []}. Do not output any markdown formatting, only pure JSON.`;
+
 export default function CrawlDocsFrontend() {
   const [sourceType, setSourceType] = useState<'sitemap' | 'manual'>('sitemap');
   const [inputValue, setInputValue] = useState('');
@@ -23,10 +67,20 @@ export default function CrawlDocsFrontend() {
   const [maxUrls, setMaxUrls] = useState('1000');
   const [enableClean, setEnableClean] = useState(true);
   
-  // Custom API Settings
+  // Content Cleaner 配置
   const [firecrawlKey, setFirecrawlKey] = useState('');
   const [llmApiKey, setLlmApiKey] = useState('');
   const [llmModelName, setLlmModelName] = useState('glm-4-flash');
+  const [llmBaseUrl, setLlmBaseUrl] = useState('');
+  const [cleaningPrompt, setCleaningPrompt] = useState(DEFAULT_CLEANING_PROMPT);
+  const [showCleaningPrompt, setShowCleaningPrompt] = useState(false);
+
+  // URL Extractor 配置
+  const [urlExtractorApiKey, setUrlExtractorApiKey] = useState('');
+  const [urlExtractorBaseUrl, setUrlExtractorBaseUrl] = useState('');
+  const [urlExtractorModel, setUrlExtractorModel] = useState('');
+  const [urlExtractorPrompt, setUrlExtractorPrompt] = useState(DEFAULT_URL_EXTRACTOR_PROMPT);
+  const [showUrlExtractorPrompt, setShowUrlExtractorPrompt] = useState(false);
   
   // Job Tracking
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -77,8 +131,16 @@ export default function CrawlDocsFrontend() {
         maxUrls,
         enableClean,
         firecrawlKey: firecrawlKey || undefined,
+        // Content Cleaner
         llmApiKey: llmApiKey || undefined,
         llmModel: llmModelName || undefined,
+        llmBaseUrl: llmBaseUrl || undefined,
+        cleaningPrompt: cleaningPrompt !== DEFAULT_CLEANING_PROMPT ? cleaningPrompt : undefined,
+        // URL Extractor
+        urlExtractorApiKey: urlExtractorApiKey || undefined,
+        urlExtractorBaseUrl: urlExtractorBaseUrl || undefined,
+        urlExtractorModel: urlExtractorModel || undefined,
+        urlExtractorPrompt: urlExtractorPrompt !== DEFAULT_URL_EXTRACTOR_PROMPT ? urlExtractorPrompt : undefined,
       };
 
       const res = await fetch('/api/crawl', {
@@ -171,7 +233,7 @@ export default function CrawlDocsFrontend() {
                  value={inputValue}
                  onChange={(e) => setInputValue(e.target.value)}
                  className="w-full bg-white border border-[#D5C5B5] rounded-xl px-4 py-2.5 text-sm text-gray-800 focus:ring-amber-500 focus:border-amber-500 shadow-sm outline-none resize-y min-h-[100px]" 
-                 placeholder="https://example.com/page1&#10;https://example.com/page2" 
+                 placeholder={"https://example.com/page1\nhttps://example.com/page2"} 
                />
             )}
             
@@ -209,7 +271,7 @@ export default function CrawlDocsFrontend() {
             </div>
           </div>
 
-          {/* Tracker Board replacing Video Preview */}
+          {/* Tracker Board */}
           <div className="bg-black rounded-2xl overflow-hidden mb-8 relative aspect-video flex flex-col justify-center items-center shadow-inner border border-gray-900 border-opacity-50">
              
              {!taskId ? (
@@ -338,6 +400,7 @@ export default function CrawlDocsFrontend() {
               
               {/* Right Column: AI APIs Mapping */}
               <div className="col-span-7 space-y-4">
+                {/* Scraping Processor 卡片 */}
                 <div className="bg-white rounded-xl p-4 border border-[#E5D5C5]">
                   <h3 className="text-sm font-semibold text-gray-800 mb-3">Scraping Processor</h3>
                   <input 
@@ -353,6 +416,7 @@ export default function CrawlDocsFrontend() {
                   </select>
                 </div>
                 
+                {/* LLM Content Cleaner 卡片 */}
                 <div className="bg-white rounded-xl p-4 border border-[#E5D5C5]">
                   <h3 className="text-sm font-semibold text-gray-800 mb-3">LLM Content Cleaner</h3>
                   <input 
@@ -362,16 +426,128 @@ export default function CrawlDocsFrontend() {
                     className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
                     type="password" 
                   />
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Active Model</label>
-                  <select 
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Base URL</label>
+                  <input 
+                    value={llmBaseUrl}
+                    onChange={(e) => setLlmBaseUrl(e.target.value)}
+                    placeholder="e.g. https://open.bigmodel.cn/api/paas/v4/ (Leave blank for default)" 
+                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                    type="text" 
+                  />
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Model</label>
+                  <input 
+                    list="cleaner-model-suggestions"
                     value={llmModelName}
                     onChange={(e) => setLlmModelName(e.target.value)}
+                    placeholder="Enter model name..."
                     className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 appearance-none outline-none focus:ring-amber-500 focus:border-amber-500"
-                  >
-                    <option value="glm-4-flash">glm-4-flash (DeepSeek Compatible)</option>
-                    <option value="deepseek-chat">deepseek-chat</option>
-                    <option value="gpt-4o-mini">gpt-4o-mini</option>
-                  </select>
+                  />
+                  <datalist id="cleaner-model-suggestions">
+                    <option value="glm-4-flash" />
+                    <option value="deepseek-chat" />
+                    <option value="gpt-4o-mini" />
+                    <option value="qwen-turbo" />
+                    <option value="claude-3-haiku-20240307" />
+                  </datalist>
+
+                  {/* 可折疊的自訂 Prompt */}
+                  <div className="mt-3 border-t border-[#E5D5C5] pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowCleaningPrompt(!showCleaningPrompt)}
+                      className="flex items-center justify-between w-full text-xs font-medium text-gray-600 hover:text-gray-900 transition-colors"
+                    >
+                      <span>Custom Cleaning Prompt</span>
+                      <svg className={`w-4 h-4 transition-transform ${showCleaningPrompt ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                    </button>
+                    {showCleaningPrompt && (
+                      <div className="mt-2">
+                        <textarea
+                          value={cleaningPrompt}
+                          onChange={(e) => setCleaningPrompt(e.target.value)}
+                          className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-xs text-gray-700 outline-none focus:ring-amber-500 focus:border-amber-500 resize-y min-h-[120px] max-h-[300px] font-mono leading-relaxed"
+                          rows={8}
+                        />
+                        <div className="flex justify-between items-center mt-1">
+                          <span className="text-[10px] text-gray-400">{cleaningPrompt.length} chars</span>
+                          <button
+                            type="button"
+                            onClick={() => setCleaningPrompt(DEFAULT_CLEANING_PROMPT)}
+                            className="text-[10px] text-amber-700 hover:text-amber-900 transition-colors underline"
+                          >
+                            Reset to default
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* URL Extractor 卡片（新增） */}
+                <div className="bg-white rounded-xl p-4 border border-[#E5D5C5]">
+                  <h3 className="text-sm font-semibold text-gray-800 mb-3">URL Extractor (LLM)</h3>
+                  <p className="text-[10px] text-gray-400 mb-3">Used when extracting URLs from raw text input. Not needed for sitemap URLs.</p>
+                  <input 
+                    value={urlExtractorApiKey}
+                    onChange={(e) => setUrlExtractorApiKey(e.target.value)}
+                    placeholder="API Key (Leave blank for default env)" 
+                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                    type="password" 
+                  />
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Base URL</label>
+                  <input 
+                    value={urlExtractorBaseUrl}
+                    onChange={(e) => setUrlExtractorBaseUrl(e.target.value)}
+                    placeholder="e.g. https://api.deepseek.com/v1 (Leave blank for default)" 
+                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                    type="text" 
+                  />
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Model</label>
+                  <input 
+                    list="extractor-model-suggestions"
+                    value={urlExtractorModel}
+                    onChange={(e) => setUrlExtractorModel(e.target.value)}
+                    placeholder="e.g. deepseek-chat (Leave blank for default)"
+                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 appearance-none outline-none focus:ring-amber-500 focus:border-amber-500"
+                  />
+                  <datalist id="extractor-model-suggestions">
+                    <option value="deepseek-chat" />
+                    <option value="glm-4-flash" />
+                    <option value="gpt-4o-mini" />
+                    <option value="qwen-turbo" />
+                  </datalist>
+
+                  {/* 可折疊的自訂 Prompt */}
+                  <div className="mt-3 border-t border-[#E5D5C5] pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowUrlExtractorPrompt(!showUrlExtractorPrompt)}
+                      className="flex items-center justify-between w-full text-xs font-medium text-gray-600 hover:text-gray-900 transition-colors"
+                    >
+                      <span>Custom Extractor Prompt</span>
+                      <svg className={`w-4 h-4 transition-transform ${showUrlExtractorPrompt ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                    </button>
+                    {showUrlExtractorPrompt && (
+                      <div className="mt-2">
+                        <textarea
+                          value={urlExtractorPrompt}
+                          onChange={(e) => setUrlExtractorPrompt(e.target.value)}
+                          className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-xs text-gray-700 outline-none focus:ring-amber-500 focus:border-amber-500 resize-y min-h-[80px] max-h-[200px] font-mono leading-relaxed"
+                          rows={4}
+                        />
+                        <div className="flex justify-between items-center mt-1">
+                          <span className="text-[10px] text-gray-400">{urlExtractorPrompt.length} chars</span>
+                          <button
+                            type="button"
+                            onClick={() => setUrlExtractorPrompt(DEFAULT_URL_EXTRACTOR_PROMPT)}
+                            className="text-[10px] text-amber-700 hover:text-amber-900 transition-colors underline"
+                          >
+                            Reset to default
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

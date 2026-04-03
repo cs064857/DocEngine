@@ -2,11 +2,25 @@ import { XMLParser } from 'fast-xml-parser';
 import { chatCompletion } from '../services/llm';
 import { config } from '../config';
 
+// URL Extractor 覆蓋配置介面
+export interface UrlExtractorOverrides {
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+  prompt?: string;
+}
+
+// 預設 URL 提取提示詞（來源：URL_EXTRACTOR_PROMPT.md）
+const DEFAULT_URL_EXTRACTOR_PROMPT = `You are a helpful assistant that extracts URLs from text.
+Output ONLY a valid JSON object containing a "urls" key mapped to an array of strings.
+If no valid URLs are found, output {"urls": []}. Do not output any markdown formatting, only pure JSON.`.trim();
+
 /**
- * Given user input, figure out if it's a URL leading to a sitemap, or raw text.
- * Return an array of extracted URLs.
+ * 根據使用者輸入，判斷是 sitemap URL 還是原始文字，回傳提取的 URL 陣列
+ * @param input - 使用者輸入
+ * @param overrides - 可選 LLM 覆蓋配置（apiKey, baseUrl, model, prompt）
  */
-export async function extractUrls(input: string): Promise<string[]> {
+export async function extractUrls(input: string, overrides?: UrlExtractorOverrides): Promise<string[]> {
   const isUrl = /^(https?:\/\/[^\s]+)/.test(input.trim());
 
   if (isUrl) {
@@ -14,13 +28,13 @@ export async function extractUrls(input: string): Promise<string[]> {
     if (url.endsWith('.xml') || url.includes('sitemap')) {
       return extractFromSitemap(url);
     } else {
-      // If a single page URL was provided but it's not a sitemap
+      // 單一頁面 URL，非 sitemap
       return [url];
     }
   }
 
-  // Attempt to extract from text using LLM
-  return extractFromText(input);
+  // 嘗試透過 LLM 從文字中提取 URL
+  return extractFromText(input, overrides);
 }
 
 /**
@@ -77,17 +91,24 @@ async function extractFromSitemap(sitemapUrl: string): Promise<string[]> {
 }
 
 /**
- * Use LLM to cleanly extract URLs from raw text
+ * 使用 LLM 從原始文字中提取 URL
+ * @param text - 原始文字
+ * @param overrides - 可選 LLM 覆蓋配置
  */
-async function extractFromText(text: string): Promise<string[]> {
+async function extractFromText(text: string, overrides?: UrlExtractorOverrides): Promise<string[]> {
   console.log(`[URL Extractor] Extracting URLs via LLM`);
 
-  const systemPrompt = `You are a helpful assistant that extracts URLs from text.
-Output ONLY a valid JSON object containing a "urls" key mapped to an array of strings.
-If no valid URLs are found, output {"urls": []}. Do not output any markdown formatting, only pure JSON.`;
+  const promptToUse = overrides?.prompt || DEFAULT_URL_EXTRACTOR_PROMPT;
 
-  const rawJson = await chatCompletion(config.llm.urlExtractor, [
-    { role: 'system', content: systemPrompt },
+  // 組合 LLM 配置，支援覆蓋
+  const llmConfig = {
+    baseUrl: overrides?.baseUrl || config.llm.urlExtractor.baseUrl,
+    apiKey: overrides?.apiKey || config.llm.urlExtractor.apiKey,
+    model: overrides?.model || config.llm.urlExtractor.model,
+  };
+
+  const rawJson = await chatCompletion(llmConfig, [
+    { role: 'system', content: promptToUse },
     { role: 'user', content: `Please extract URLs from the following text:\n\n${text}` }
   ], { responseFormat: 'json_object' });
 

@@ -16,9 +16,15 @@ export async function POST(req: NextRequest) {
 
     console.log('[API Crawl] Extracting URLs...');
     
-    // We can also let the url extractor use overrides, though less critical than processor.
-    // For now assuming extractor just uses default config to save time, but we could add it.
-    let urls = await extractUrls(input);
+    // 組合 URL Extractor 覆蓋配置
+    const urlExtractorOverrides = {
+      apiKey: engineSettings?.urlExtractorApiKey || undefined,
+      baseUrl: engineSettings?.urlExtractorBaseUrl || undefined,
+      model: engineSettings?.urlExtractorModel || undefined,
+      prompt: engineSettings?.urlExtractorPrompt || undefined,
+    };
+
+    let urls = await extractUrls(input, urlExtractorOverrides);
 
     if (urls.length === 0) {
       return NextResponse.json({ error: 'No valid URLs found in input' }, { status: 400 });

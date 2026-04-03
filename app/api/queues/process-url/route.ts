@@ -11,12 +11,21 @@ export interface CrawlJobPayload {
   url: string;
   date: string;
   engineSettings?: {
+    // Content Cleaner 配置
     llmModel?: string;
     llmApiKey?: string;
     llmBaseUrl?: string;
+    cleaningPrompt?: string;
+    // Firecrawl 配置
     firecrawlKey?: string;
     firecrawlUrl?: string;
+    // 處理旗標
     enableClean?: boolean;
+    // URL Extractor 配置（僅在 /api/crawl 階段使用，queue 不需要）
+    urlExtractorApiKey?: string;
+    urlExtractorBaseUrl?: string;
+    urlExtractorModel?: string;
+    urlExtractorPrompt?: string;
   };
 }
 
@@ -48,6 +57,7 @@ export const POST = handleCallback<CrawlJobPayload>(
            model: engineSettings?.llmModel,
            apiKey: engineSettings?.llmApiKey,
            baseUrl: engineSettings?.llmBaseUrl,
+           prompt: engineSettings?.cleaningPrompt,
         };
         cleanedMarkdown = await cleanContent(rawMarkdown, cleanerConfig);
       }
