@@ -502,9 +502,16 @@ export default function CrawlDocsFrontend() {
                    
                    <div className="relative z-10 flex-1 flex flex-col">
                      <div className="flex justify-between items-center mb-auto pt-2">
-                       <span className="bg-amber-600/20 text-amber-500 text-xs px-3 py-1 rounded-full uppercase tracking-wider font-semibold border border-amber-600/40">
-                         {taskStatus?.status === 'completed' ? 'Finished' : taskStatus?.status === 'failed' ? 'Failed' : 'Processing'}
-                       </span>
+                       <div className="flex items-center gap-3">
+                         <span className="bg-amber-600/20 text-amber-500 text-xs px-3 py-1 rounded-full uppercase tracking-wider font-semibold border border-amber-600/40">
+                           {taskStatus?.status === 'completed' ? 'Finished' : taskStatus?.status === 'failed' ? 'Failed' : 'Processing'}
+                         </span>
+                         {taskStatus?.date && (
+                           <span className="text-gray-500 text-xs font-mono border border-gray-700 bg-gray-800/50 px-2 py-0.5 rounded">
+                             {new Date(taskStatus.date).toLocaleString()}
+                           </span>
+                         )}
+                       </div>
                        <span className="text-gray-400 text-xs font-mono">ID: {taskId}</span>
                      </div>
                      
@@ -522,19 +529,37 @@ export default function CrawlDocsFrontend() {
                      </div>
                      
                      {/* Lower Metrics box */}
-                     <div className="mt-auto grid grid-cols-3 gap-4 pb-2">
-                       <div className="bg-gray-900/80 rounded-lg p-3 border border-gray-800">
-                         <div className="text-gray-500 text-[10px] uppercase font-bold tracking-widest">Total Found</div>
-                         <div className="text-gray-200 text-xl font-light mt-1">{taskStatus?.total || 0}</div>
+                     <div className="mt-auto flex flex-col gap-4 pb-2">
+                       <div className="grid grid-cols-3 gap-4">
+                         <div className="bg-gray-900/80 rounded-lg p-3 border border-gray-800">
+                           <div className="text-gray-500 text-[10px] uppercase font-bold tracking-widest">Total Found</div>
+                           <div className="text-gray-200 text-xl font-light mt-1">{taskStatus?.total || 0}</div>
+                         </div>
+                         <div className="bg-gray-900/80 rounded-lg p-3 border border-amber-900/30">
+                           <div className="text-amber-500 text-[10px] uppercase font-bold tracking-widest">Completed</div>
+                           <div className="text-amber-100 text-xl font-light mt-1">{taskStatus?.completed || 0}</div>
+                         </div>
+                         <div className="bg-gray-900/80 rounded-lg p-3 border border-red-900/30">
+                           <div className="text-red-500 text-[10px] uppercase font-bold tracking-widest">Failures</div>
+                           <div className="text-red-100 text-xl font-light mt-1">{taskStatus?.failed || 0}</div>
+                         </div>
                        </div>
-                       <div className="bg-gray-900/80 rounded-lg p-3 border border-amber-900/30">
-                         <div className="text-amber-500 text-[10px] uppercase font-bold tracking-widest">Completed</div>
-                         <div className="text-amber-100 text-xl font-light mt-1">{taskStatus?.completed || 0}</div>
-                       </div>
-                       <div className="bg-gray-900/80 rounded-lg p-3 border border-red-900/30">
-                         <div className="text-red-500 text-[10px] uppercase font-bold tracking-widest">Failures</div>
-                         <div className="text-red-100 text-xl font-light mt-1">{taskStatus?.failed || 0}</div>
-                       </div>
+                       
+                       {/* Failed URLs List */}
+                       {taskStatus?.failedUrls && taskStatus.failedUrls.length > 0 && (
+                         <div className="mt-2 text-left bg-red-950/30 border border-red-900/50 rounded-lg p-3 max-h-32 overflow-y-auto custom-scrollbar">
+                           <div className="text-red-400 text-[10px] uppercase font-bold tracking-widest mb-2 sticky top-0 bg-red-950/80 backdrop-blur-sm py-1">Failed URLs Log</div>
+                           <ul className="space-y-2">
+                             {taskStatus.failedUrls.map((item, idx) => (
+                               <li key={idx} className="text-xs text-red-200/80 truncate font-mono">
+                                 <span className="text-red-500 mr-2">[{idx + 1}]</span>
+                                 <span className="opacity-80" title={item.url}>{item.url}</span>
+                                 <div className="text-red-400/60 text-[10px] mt-0.5 ml-6 truncate" title={item.error}>{item.error}</div>
+                               </li>
+                             ))}
+                           </ul>
+                         </div>
+                       )}
                      </div>
                    </div>
                 </div>
