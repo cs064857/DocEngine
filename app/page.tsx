@@ -23,6 +23,11 @@ export default function CrawlDocsFrontend() {
   const [maxUrls, setMaxUrls] = useState('1000');
   const [enableClean, setEnableClean] = useState(true);
   
+  // Custom API Settings
+  const [firecrawlKey, setFirecrawlKey] = useState('');
+  const [llmApiKey, setLlmApiKey] = useState('');
+  const [llmModelName, setLlmModelName] = useState('glm-4-flash');
+  
   // Job Tracking
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
@@ -68,10 +73,18 @@ export default function CrawlDocsFrontend() {
     setTaskId(null);
 
     try {
+      const engineSettings = {
+        maxUrls,
+        enableClean,
+        firecrawlKey: firecrawlKey || undefined,
+        llmApiKey: llmApiKey || undefined,
+        llmModel: llmModelName || undefined,
+      };
+
       const res = await fetch('/api/crawl', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input: inputValue }),
+        body: JSON.stringify({ input: inputValue, engineSettings }),
       });
 
       const data = await res.json();
@@ -327,7 +340,13 @@ export default function CrawlDocsFrontend() {
               <div className="col-span-7 space-y-4">
                 <div className="bg-white rounded-xl p-4 border border-[#E5D5C5]">
                   <h3 className="text-sm font-semibold text-gray-800 mb-3">Scraping Processor</h3>
-                  <input readOnly value="********************" className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-400 mb-3" type="password" />
+                  <input 
+                    value={firecrawlKey}
+                    onChange={(e) => setFirecrawlKey(e.target.value)}
+                    placeholder="API Key (Leave blank for default env)" 
+                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                    type="password" 
+                  />
                   <label className="block text-xs font-medium text-gray-700 mb-1">Provider Engine</label>
                   <select className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 appearance-none outline-none">
                     <option>Firecrawl (mendable)</option>
@@ -336,10 +355,22 @@ export default function CrawlDocsFrontend() {
                 
                 <div className="bg-white rounded-xl p-4 border border-[#E5D5C5]">
                   <h3 className="text-sm font-semibold text-gray-800 mb-3">LLM Content Cleaner</h3>
-                  <input readOnly value="********************" className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-400 mb-3" type="password" />
+                  <input 
+                    value={llmApiKey}
+                    onChange={(e) => setLlmApiKey(e.target.value)}
+                    placeholder="API Key (Leave blank for default env)" 
+                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                    type="password" 
+                  />
                   <label className="block text-xs font-medium text-gray-700 mb-1">Active Model</label>
-                  <select className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 appearance-none outline-none">
-                    <option>glm-4-flash (DeepSeek Compatible)</option>
+                  <select 
+                    value={llmModelName}
+                    onChange={(e) => setLlmModelName(e.target.value)}
+                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 appearance-none outline-none focus:ring-amber-500 focus:border-amber-500"
+                  >
+                    <option value="glm-4-flash">glm-4-flash (DeepSeek Compatible)</option>
+                    <option value="deepseek-chat">deepseek-chat</option>
+                    <option value="gpt-4o-mini">gpt-4o-mini</option>
                   </select>
                 </div>
               </div>

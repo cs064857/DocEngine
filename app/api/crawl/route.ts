@@ -8,13 +8,16 @@ import { config } from '@/lib/config';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { input } = body;
+    const { input, engineSettings } = body;
 
     if (!input || typeof input !== 'string') {
       return NextResponse.json({ error: 'Missing or invalid input' }, { status: 400 });
     }
 
     console.log('[API Crawl] Extracting URLs...');
+    
+    // We can also let the url extractor use overrides, though less critical than processor.
+    // For now assuming extractor just uses default config to save time, but we could add it.
     let urls = await extractUrls(input);
 
     if (urls.length === 0) {
@@ -22,9 +25,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Apply max limit
-    if (urls.length > config.project.maxUrlsLimit) {
-      console.warn(`[API Crawl] URLs count (${urls.length}) exceeds limit. Truncating to ${config.project.maxUrlsLimit}.`);
-      urls = urls.slice(0, config.project.maxUrlsLimit);
+    const hardLimit = engineSettings?.maxUrls ? parseInt(engineSettings.maxUrls) : config.project.maxUrlsLimit;
+    if (urls.length > hardLimit) {
+      console.warn(`[API Crawl] URLs count (${urls.length}) exceeds limit. Truncating to ${hardLimit}.`);
+      urls = urls.slice(0, hardLimit);
     }
 
     const taskId = generateTaskId();
@@ -46,13 +50,13 @@ export async function POST(req: NextRequest) {
     // Send jobs to queue topic 'crawl-urls'
     console.log(`[API Crawl] Sending ${urls.length} messages to Queue...`);
     
-    // While Vercel queue offers batch sending in standard setup, the basic standard is a loop:
     const queuePromises = urls.map(url => {
       // payload structure matches what processor expects
       return send('crawl-urls', { 
         taskId, 
         url, 
-        date 
+        date,
+        engineSettings
       });
     });
     

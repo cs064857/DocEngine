@@ -10,25 +10,47 @@ export interface CrawlJobPayload {
   taskId: string;
   url: string;
   date: string;
+  engineSettings?: {
+    llmModel?: string;
+    llmApiKey?: string;
+    llmBaseUrl?: string;
+    firecrawlKey?: string;
+    firecrawlUrl?: string;
+    enableClean?: boolean;
+  };
 }
 
 export const POST = handleCallback<CrawlJobPayload>(
   async (message, metadata) => {
-    const { taskId, url, date } = message;
+    const { taskId, url, date, engineSettings } = message;
 
     console.log(`[Queue] Processing URL: ${url} (Task: ${taskId}, attempt ${metadata.deliveryCount})`);
 
     try {
       // 1. Firecrawl scrape
-      const rawMarkdown = await scrapeUrl(url);
+      const crawlerConfig = {
+         apiKey: engineSettings?.firecrawlKey,
+         apiUrl: engineSettings?.firecrawlUrl,
+      };
+      
+      const rawMarkdown = await scrapeUrl(url, crawlerConfig);
       
       // 2. Save raw -> R2
       const rawKey = buildR2Key(url, 'raw', date);
       await putObject(rawKey, rawMarkdown);
       console.log(`[Queue] Saved raw markdown to ${rawKey}`);
 
-      // 3. LLM clean
-      const cleanedMarkdown = await cleanContent(rawMarkdown);
+      let cleanedMarkdown = rawMarkdown;
+
+      // 3. LLM clean (Only runs if enableClean is missing or strictly true)
+      if (engineSettings?.enableClean !== false) {
+        const cleanerConfig = {
+           model: engineSettings?.llmModel,
+           apiKey: engineSettings?.llmApiKey,
+           baseUrl: engineSettings?.llmBaseUrl,
+        };
+        cleanedMarkdown = await cleanContent(rawMarkdown, cleanerConfig);
+      }
 
       // 4. Save cleaned -> R2
       const cleanedKey = buildR2Key(url, 'cleaned', date);

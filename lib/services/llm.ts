@@ -18,9 +18,9 @@ export interface ChatOptions {
  * Standard implementation for fetching from an OpenAI-compatible API without huge SDK overheads
  */
 export async function chatCompletion(
-  configParams: LLMConfig,
-  messages: ChatMessage[],
-  options?: ChatOptions
+  configParams: { baseUrl: string; apiKey: string; model: string },
+  messages: Record<string, unknown>[],
+  options?: { responseFormat?: string; temperature?: number }
 ): Promise<string> {
   // exponential backoff retry loop
   const MAX_RETRIES = 3;
