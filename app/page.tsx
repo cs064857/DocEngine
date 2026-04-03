@@ -102,6 +102,10 @@ export default function CrawlDocsFrontend() {
   const [taskStatus, setTaskStatus] = useState<JobTask | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // History tasks state
+  const [tasksList, setTasksList] = useState<JobTask[]>([]);
+  const [isTasksLoading, setIsTasksLoading] = useState(false);
+
   // Hydration state for localStorage
   const [isMounted, setIsMounted] = useState(false);
 
@@ -187,12 +191,44 @@ export default function CrawlDocsFrontend() {
       }
     };
 
-    // Poll every 3 seconds
     const interval = setInterval(fetchStatus, 3000);
     fetchStatus(); // initial call
 
     return () => clearInterval(interval);
   }, [taskId]);
+
+  // Fetch History Tasks
+  useEffect(() => {
+    if (activeTab === 'tasks') {
+      const loadTasks = async () => {
+        setIsTasksLoading(true);
+        try {
+          const hasR2Overrides = r2AccountId || r2AccessKeyId || r2SecretAccessKey;
+          const res = hasR2Overrides
+            ? await fetch(`/api/tasks`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  r2AccountId: r2AccountId || undefined,
+                  r2AccessKeyId: r2AccessKeyId || undefined,
+                  r2SecretAccessKey: r2SecretAccessKey || undefined,
+                  r2BucketName: r2BucketName || undefined,
+                }),
+              })
+            : await fetch(`/api/tasks`);
+          if (res.ok) {
+            const data = await res.json();
+            setTasksList(data.tasks || []);
+          }
+        } catch (e) {
+          console.error("Failed to load tasks", e);
+        } finally {
+          setIsTasksLoading(false);
+        }
+      };
+      loadTasks();
+    }
+  }, [activeTab, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
 
   const handleSubmit = async () => {
     if (!inputValue.trim()) {
@@ -937,13 +973,72 @@ export default function CrawlDocsFrontend() {
           <h1 className="text-3xl font-bold text-gray-900 mb-2 tracking-tight">Tasks</h1>
           <p className="text-sm text-gray-500 mb-8">View and manage your crawling tasks.</p>
 
-          <div className="text-center py-16 opacity-60">
-            <div className="mx-auto w-16 h-16 bg-[#F8F5EE] rounded-full flex items-center justify-center mb-4 border border-[#E5D5C5]">
-              <svg className="w-8 h-8 text-amber-500/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+          {isTasksLoading ? (
+            <div className="text-center py-16 opacity-60">
+              <svg className="animate-spin w-8 h-8 text-amber-500 mx-auto mb-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25"></circle>
+                <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor" className="opacity-75"></path>
+              </svg>
+              <h3 className="text-gray-600 font-semibold text-sm">Loading task history...</h3>
             </div>
-            <h3 className="text-gray-600 font-semibold text-sm">No task history yet</h3>
-            <p className="text-gray-400 text-xs mt-2">Tasks created from the Create tab will appear here.</p>
-          </div>
+          ) : tasksList.length === 0 ? (
+            <div className="text-center py-16 opacity-60">
+              <div className="mx-auto w-16 h-16 bg-[#F8F5EE] rounded-full flex items-center justify-center mb-4 border border-[#E5D5C5]">
+                <svg className="w-8 h-8 text-amber-500/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+              </div>
+              <h3 className="text-gray-600 font-semibold text-sm">No task history yet</h3>
+              <p className="text-gray-400 text-xs mt-2">Tasks created from the Create tab will appear here.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {tasksList.map((t) => {
+                const progress = t.total ? Math.round(((t.completed + t.failed) / t.total) * 100) : 0;
+                return (
+                  <div key={t.taskId} className="bg-[#F8F5EE] rounded-2xl p-5 border border-[#E5D5C5] flex items-center justify-between transition-all hover:shadow-sm">
+                    <div className="flex-1 min-w-0 mr-4">
+                      <div className="flex items-center gap-3 mb-2">
+                        <span className={`text-[10px] px-2.5 py-0.5 rounded-full uppercase tracking-wider font-bold border ${
+                          t.status === 'completed' ? 'bg-green-100 text-green-700 border-green-200' :
+                          t.status === 'failed' ? 'bg-red-100 text-red-700 border-red-200' :
+                          'bg-amber-100 text-amber-700 border-amber-200'
+                        }`}>
+                          {t.status}
+                        </span>
+                        {t.date && (
+                          <span className="text-xs text-gray-500 font-mono">
+                            {new Date(t.date).toLocaleString()}
+                          </span>
+                        )}
+                        <span className="text-[10px] text-gray-400 font-mono hidden sm:inline-block">ID: {t.taskId}</span>
+                      </div>
+                      
+                      <div className="w-full max-w-sm h-1.5 bg-white rounded-full mt-3 overflow-hidden border border-[#E5D5C5]">
+                        <div 
+                          className="h-full bg-amber-500 rounded-full transition-all"
+                          style={{ width: `${progress}%` }}
+                        ></div>
+                      </div>
+                      <div className="flex gap-4 mt-2 text-xs">
+                        <span className="text-gray-600 font-medium">{t.completed} <span className="text-gray-400 font-normal">done</span></span>
+                        {t.failed > 0 && <span className="text-red-500 font-medium">{t.failed} <span className="text-red-400 font-normal">fail</span></span>}
+                        <span className="text-gray-500 font-medium">{t.total} <span className="text-gray-400 font-normal">total</span></span>
+                      </div>
+                    </div>
+                    
+                    <button 
+                      onClick={() => {
+                        setTaskId(t.taskId);
+                        setActiveTab('create');
+                      }}
+                      className="shrink-0 bg-white border border-[#D5C5B5] text-[#845400] hover:bg-[#FDF8EB] hover:border-[#845400] px-4 py-2 rounded-xl text-xs font-semibold shadow-sm transition-all"
+                    >
+                      View Monitor
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
         )}
 
