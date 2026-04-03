@@ -106,3 +106,46 @@ export async function scrapeUrlAdvanced(
     metadata: scrapeResult.metadata as Record<string, unknown> | undefined,
   };
 }
+
+/**
+ * Start a Crawl job using Firecrawl
+ */
+export async function startCrawlJob(url: string, limit: number = 100, overrides?: CrawlerOverrides): Promise<string> {
+  console.log(`[Crawler] Starting Crawl Job for: ${url} with limit ${limit}`);
+  
+  const firecrawl = getFirecrawl(overrides);
+
+  const crawlResponse = await firecrawl.asyncCrawlUrl(url, {
+    limit,
+    scrapeOptions: {
+      formats: ['links'], // 我們只需要 links 來放入 queue 中處理
+    }
+  });
+
+  if (!crawlResponse.success) {
+    const err = crawlResponse as { error?: string };
+    throw new Error(`Crawl job start failed: ${err.error || 'Unknown error'}`);
+  }
+
+  const res = crawlResponse as { id?: string };
+  if (!res.id) {
+    throw new Error('Crawl job started but no ID was returned');
+  }
+
+  return res.id;
+}
+
+/**
+ * Check the status of a Crawl job
+ */
+export async function checkCrawlJob(jobId: string, overrides?: CrawlerOverrides) {
+  const firecrawl = getFirecrawl(overrides);
+  const statusResponse = await firecrawl.checkCrawlStatus(jobId);
+
+  if (!statusResponse.success) {
+    const err = statusResponse as { error?: string };
+    throw new Error(`Failed to check crawl status: ${err.error || 'Unknown error'}`);
+  }
+
+  return statusResponse;
+}

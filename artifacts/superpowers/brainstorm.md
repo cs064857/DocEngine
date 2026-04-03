@@ -1,48 +1,47 @@
+# Superpowers Brainstorm
+
 ## Goal
-使用 Firecrawl 的 Map API 開發一個網站路徑映射工具。在現有的 UI 中新增一個選項，讓使用者只需輸入網域或路徑，即可調用 Firecrawl Map 功能提取該網域下的所有網址，並將結果轉換後直接匯入現有的「手動網址列表」(Manual URLs List) 供使用者檢視與後續處理。
+重構及整合 CrawlDocs-web 的任務來源模式介面，將抓取模式精簡統一為三大主要動線：「Scrape」、「Crawl」、「Map」，並改善不同模式之間的工作流銜接與轉換邏輯，提升用戶體驗。
 
 ## Constraints
-- 必須與現有的 CrawlDocs UI 設計風格保持一致，包含表單與提示等。
-- 必須串接 Firecrawl 的 `/v2/map` API，並適當處置可能的網路超時或速率限制。
-- 從 Map API 獲取的結果必須能夠正確轉換為字串陣列格式並填入現有的 manual textarea 中。
-- 在 `page.tsx` 和後端 API 之間需要有適當的過渡（例如新建一個 `/api/map` 路由）。
-- 必須遵守 Vercel Function 的超時限制，若 Map 的處理時間過長（特別是大網站），前端需要有相應的載入狀態（Loading State）與錯誤處理。
+1. 需相容已開發好的 Vercel Queue 與後處理機制（LLM Content Cleaner + Save to R2）。
+2. `Scrape` 與 `Crawl` 模式都必須共享能處理單一網址、網址清單（Manual）、或網站地圖 (Sitemap) 的輸入介面。
+3. 整合後，`Map` 探索出來的網址結果，必須能在畫面上具備動線移轉，可選擇將結果交由 `Scrape` 或是 `Crawl` 進行操作。
+4. 用戶明確指示「Crawl」的定義是「對接 Firecrawl 的 Crawl API 後再進行後續處理 (Vercel Queue → 逐一 Scrape → 存 R2)」。這需要在 API 的運用（獲取列表還是獲取內容）上進行設計轉換，避免不必要的雙重消耗。
 
 ## Known context
-- 目前 `crawldocs-web` 中，處理 URL 的介面位於 `app/page.tsx`，區分為 `sitemap` 和 `manual` 兩種 `sourceType`。
-- 後端使用 `@aws-sdk/client-s3` 連接 Cloudflare R2，並使用 `@vercel/queue` 控制爬蟲併發。
-- Firecrawl Map API (`https://api.firecrawl.dev/v2/map`) 接受 `url`, `search`, `sitemap`, `ignoreCache`, `limit` 等參數，並回傳 `{ success: true, links: [{ url: "..." }] }`。
-- `engineSettings` 支援配置 `firecrawlKey`，這需要於呼叫 Map API 時帶上。
-- 在這之前，對於 `sitemap` 原本已經實作了傳統的 XML Sitemap 遞迴解析功能 (`extractFromSitemap`)。
+1. 目前有 `/api/crawl` （處理 Sitemap / Manual 並送進 Queue 等待 /api/queues/process-url 逐一呼叫 Scrape ），還有一個新的快速 `/api/scrape` 用於即時測試。
+2. Firecrawl 原生的 `Crawl API` 是非同步運行的自動爬蟲系統，預設會爬取所有子頁面的「內容」；若只要找出 URL 後再跑流程，其概念跟 Map API 有所重疊，但在 Firecrawl v2 架構下，Crawl API 通常也能針對深層網頁探索並利用 polling 去獲得最後結果。
+3. 先前的 `Map` 模式（`/api/map`）有在 UI 上回傳單純的網址字串清單。
+4. 目前追蹤進度的 Tracker Board 有完整支援 Queue 任務的概念。
 
 ## Risks
-- **超時風險**：Firecrawl 進行深度 Map 可能需要一定的時間，導致 Vercel 的預設無伺服器 API 超時（通常 10 ~ 60 秒限時）。
-- **請求失敗與錯誤處理**：如果使用者輸入非法或不存在的 URL，或者 Firecrawl 配額耗盡 (402, 429)，需要明確向前端報告錯誤。
-- **返回列表過長**：如果網站非常龐大，回傳的 URL 數量極多，直接填入 Textarea 可能會造成渲染效能問題或影響使用者體驗。需要考慮到設定 Map 請求中的 limit 參數。
+1. **API 概念與資源浪費**：如果呼叫 Firecrawl `Crawl API` 去爬整個網站，Firecrawl 其實已經幫你爬完內容。如果我們只拿裡面吐出來的 links 清單，然後「再」把它丟入我們的 Vercel Queue 跑我們自己的「逐一 Scrape」，等於針對同一個網站消耗兩次 Firecrawl Credits。這在實作時必須跟技術規格釐清（例如 Crawl 時強制設定 `formats: ["links"]` 以節省時間與花費）。
+2. **Scrape 單頁 vs 批次 概念混淆**：今天剛剛完成的「即時 Scrape 模式」是不進 Queue 直接取回畫面的；如果把 Sitemap 也丟進 Scrape 模式，在 UI 上必須整合出「單筆即時預覽」還是「送入大量佇列處理」的差別，否則體驗會斷層。
+3. **Map 後端行為狀態複雜化**：從 Map 拿到資料後，前端元件狀態要如何無縫傳遞給新的 Scrape / Crawl form，可能需要共享狀態或是透過事件將大量網址注入。
 
 ## Options (2–4)
-1. **結合為全新的 Source Type (`firecrawl-map`)，後端自動處理**
-   - 描述：在 `page.tsx` 的 Toggle 新增第三個選項 `firecrawl-map`。點選 Initialize Crawl 後，後端 `/api/crawl` 自動呼叫 Firecrawl Map 來轉出 URL 陣列，直接排入 `@vercel/queue`，不需經由 `manual` 介面。
-   - 優點：操作步驟少，整合簡單。
-   - 缺點：違反了「能直接配合"手動網址列表"做處理」這項需求的涵義（使用者可能想要先過濾網址再進行爬取）。
-   
-2. **作為 Manual Type 中的輔助生成功能 (Generate List Modal / Button)**
-   - 描述：在 Manual URLs List 模式下，旁邊加上一個「Generate from Domain via Firecrawl Map」按鈕。點擊後會呼叫新的 `/api/map`，將取得的 URL 列表直接填充或附加（append）到當前的 Textarea 內容中。
-   - 優點：符合「處理成網址列表並配合手動網址處理」的彈性需求，使用者可以手動刪減不必要的網址。
-   - 缺點：若 API 回應慢，需要一個專屬的 Loading 狀態組件。
-
-3. **新增 Map Source Type，但在獲取時先「預覽」於 Textarea**
-   - 描述：使用新的 Mode Toggle (`map` | `sitemap` | `manual`)。當切換到 `map` 時，顯示一個 URL 輸入框與一個「Fetch Map」按鈕，獲取結果後自動將 Mode 切換到 `manual` 並把清單填入文字框內。
-   - 優點：UX 流程清晰，兼具防呆與編輯的功能。
-   - 缺點：實作上要處理狀態流（從一個 Mode 切換去填充另一個 Mode 的值）。
+- **Option A (純粹將所有探索結果導入現存的 Queue)**
+  - UI 剩下 `Map`、`Scrape`、`Crawl`。
+  - `Scrape`：輸入已知名單 (Sitemap/List/單筆) → （若是多筆就進 Queue，若是單筆可即時）。
+  - `Crawl`：輸入單一 URL/Sitemap/List → 呼叫 Firecrawl 的 `/v2/crawl`（設定為只爬 `links`），輪詢結束後，取得探索到的 URL 清單，自動轉發至 Queue 中執行「逐一 Scrape → R2」。
+  - `Map`：輸入 URL → 拿到網域下名單，顯示清單給用戶選擇後，按鈕點擊 "Send to Scrape" 或 "Send to Crawl" (其實這兩者在此選項下最終都會進 Queue 跑 Scrape)。
+- **Option B (讓 Crawl 保留 Firecrawl 的原生爬取與 Webhook 優勢)**
+  - 取代我們的 Vercel Queue，當用戶選 `Crawl` 時，我們直接呼叫 Firecrawl 的 Crawl API 要求它爬內容，並接收它的完整內容然後再處理（雖然可能與用戶「要進 Queue 逐一處理」的要求相左）。
+- **Option C (根據明確的用戶動線進行前端重構)**
+  - **按鈕：** 分為 `Scrape` 跟 `Crawl`，以及單純的 `Map` 工具。
+  - `Scrape` 作為「點對點執行」的代名詞，不管是給 Sitemap 或 網址清單，都不會往外擴張，你給 10 個網址它就爬這 10 個。
+  - `Crawl` 作為「散發探索執行」的代名詞，針對你給的起點（或者 Sitemap/網址清單內的每個點），讓它擴展並自己尋找所有子連結再放入我們的 Queue。
+  - 在 `Map` 的結果區塊增加一排行動按鈕：「[🗂️ Use in Scrape] (精準抓取這些已知的連結)」 或 「[🕷️ Use in Crawl] (以此列表為起點重新向外發散探索)」。
 
 ## Recommendation
-選擇 **Option 3** (新增 Map Source Type，擷取後切換自動填入 manual 模式)。因為使用者的需求明確提到「增加一個......，輸入網域後就能直接處理成"網址列表"，能直接配合"手動網址列表"做處理」。我們可以加入第三個 Source Toggle 選項：「Firecrawl Map」。使用者輸入 URL 後點擊 "Fetch & Review URLs", API `/api/map` 取得結果後，自動把這些 URL 放進 `manual` 的 Textarea 中，並自動將 UI 切換至 Manual 模式，讓用戶得以刪減網址後，再點擊 `Initialize Crawl`。
+選擇 **Option C 架構** 作為前端規劃，以釐清三者目的：
+1. **Scrape (已知數量執行)**：承接手動輸入網址與 Sitemap。由於目標明確不發散，送出後若是批量即入 Queue，單筆則直接呈現。
+2. **Crawl (未知數量蔓延)**：承接手動輸入網址與 Sitemap，作為 "Entry point"，呼叫 Firecrawl 發出爬蟲任務，並在我們這端寫一個 Worker/Route 定期獲取 Crawl 到哪些 URL，並將這些新發現的 URL 推入 Vercel Queue。
+3. **Map (探索與分流)**：純探索。結果出來後，放置兩個切換按鈕，點擊後會直接把文字串轉入 `Scrape` 或 `Crawl` 的文字框並自動切換分頁，實現動線完美連接。
 
 ## Acceptance criteria
-1. 介面中具備 "Firecrawl Map" 選項或按鈕，允許使用者輸入目標網域 (URL)。
-2. 實作新的 API endpoint（例如 `/api/map`）來正確呼叫 `api.firecrawl.dev/v2/map`，回傳網址清單。
-3. 如果未提供全域的 Firecrawl API Key，API 路由需提示錯誤或使用內建的環境變數。
-4. 前端在發送 Map 請求時需顯示適當的載入狀態（例如 "Mapping domain..."）。
-5. 成功映射回來的 URL 會自動匯入並填滿到 "Manual URLs List" 的輸入框內，並切換狀態到該模式供使用者檢視與編輯。
-6. 發生錯誤（網路異常、Firecrawl 配額不足等）時能夠將錯誤訊息渲染在前端。
+1. 原先 Create Tab 的四顆按鈕整併或重構成有 `Map`, `Crawl`, `Scrape`。
+2. `Scrape` 的表單能適配單個 URL（立刻抓）、多個 URL 或 Sitemap (送入 Queue 跑現有 `/api/crawl` 邏輯)。
+3. 實作 `/api/crawl` (Crawl API mode) 或在原來基礎上讓它呼叫 Firecrawl Crawl，收集到網址清單後再放入 Queue。
+4. 在發送 `Map` 並拿到網域陣列後，UI 會展示出 URL 清單，且具備 `Send to Scrape` 及 `Send to Crawl` 兩個顯眼操作。
