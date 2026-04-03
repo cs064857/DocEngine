@@ -58,7 +58,7 @@ Output ONLY a valid JSON object containing a "urls" key mapped to an array of st
 If no valid URLs are found, output {"urls": []}. Do not output any markdown formatting, only pure JSON.`;
 
 export default function CrawlDocsFrontend() {
-  const [sourceType, setSourceType] = useState<'sitemap' | 'manual'>('sitemap');
+  const [sourceType, setSourceType] = useState<'sitemap' | 'manual' | 'map'>('sitemap');
   const [inputValue, setInputValue] = useState('');
   
   // Advanced parameters
@@ -81,6 +81,13 @@ export default function CrawlDocsFrontend() {
   const [urlExtractorModel, setUrlExtractorModel] = useState('');
   const [urlExtractorPrompt, setUrlExtractorPrompt] = useState(DEFAULT_URL_EXTRACTOR_PROMPT);
   const [showUrlExtractorPrompt, setShowUrlExtractorPrompt] = useState(false);
+
+  // Firecrawl Map 配置
+  const [mapUrl, setMapUrl] = useState('');
+  const [mapSearch, setMapSearch] = useState('');
+  const [mapLimit, setMapLimit] = useState('5000');
+  const [isMapping, setIsMapping] = useState(false);
+  const [mapResultCount, setMapResultCount] = useState<number | null>(null);
   
   // Job Tracking
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -212,6 +219,57 @@ export default function CrawlDocsFrontend() {
     }
   };
 
+  // Firecrawl Map 擷取功能
+  const handleMapFetch = async () => {
+    if (!mapUrl.trim()) {
+      setErrorMsg('Please provide a domain or URL to map.');
+      return;
+    }
+
+    setErrorMsg('');
+    setIsMapping(true);
+    setMapResultCount(null);
+
+    try {
+      const res = await fetch('/api/map', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: mapUrl.trim(),
+          search: mapSearch.trim() || undefined,
+          limit: mapLimit,
+          firecrawlKey: firecrawlKey || undefined,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || data.details || 'Map request failed');
+      }
+
+      if (data.urls && data.urls.length > 0) {
+        // 如果目前已有手動輸入的內容，將 Map 結果附加到後方
+        const existingUrls = inputValue.trim();
+        const mappedUrls = data.urls.join('\n');
+        setInputValue(existingUrls ? `${existingUrls}\n${mappedUrls}` : mappedUrls);
+        setMapResultCount(data.count);
+        // 自動切換至 manual 模式讓使用者檢視與編輯
+        setSourceType('manual');
+      } else {
+        setErrorMsg('No URLs found for the provided domain.');
+      }
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        setErrorMsg(e.message || 'Failed to map domain.');
+      } else {
+        setErrorMsg('Failed to map domain.');
+      }
+    } finally {
+      setIsMapping(false);
+    }
+  };
+
   const calculateProgress = () => {
     if (!taskStatus || taskStatus.total === 0) return 0;
     return Math.round(((taskStatus.completed + taskStatus.failed) / taskStatus.total) * 100);
@@ -239,7 +297,7 @@ export default function CrawlDocsFrontend() {
         <div className="bg-white rounded-[2rem] p-8 custom-shadow stacked-card relative border border-gray-100/50">
           <h1 className="text-3xl font-bold text-gray-900 mb-8 tracking-tight">Create Crawling Task</h1>
           
-          {/* Source Toggle */}
+          {/* Source Toggle — 三個選項 */}
           <div className="flex bg-[#F1EBE0] p-1 rounded-xl mb-6 relative">
             <button 
               onClick={() => setSourceType('sitemap')}
@@ -255,36 +313,129 @@ export default function CrawlDocsFrontend() {
               <span className="relative z-10">Manual URLs List</span>
               {sourceType === 'manual' && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-orange-100/30 to-transparent"></div>}
             </button>
+            <button 
+              onClick={() => setSourceType('map')}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg relative overflow-hidden transition-all ${sourceType === 'map' ? 'bg-white shadow-sm border border-orange-100/50 text-amber-900' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <span className="relative z-10 flex items-center justify-center gap-1.5">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path></svg>
+                Firecrawl Map
+              </span>
+              {sourceType === 'map' && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-orange-100/30 to-transparent"></div>}
+            </button>
           </div>
 
-          {/* Input Box */}
+          {/* Input Box — 根據模式切換 */}
           <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="source-input">
-              {sourceType === 'sitemap' ? 'Sitemap / Target URL' : 'List of URLs (comma or newline separated)'}
-            </label>
-            
-            {sourceType === 'sitemap' ? (
-               <input 
-                 id="source-input"
-                 value={inputValue}
-                 onChange={(e) => setInputValue(e.target.value)}
-                 className="w-full bg-white border border-[#D5C5B5] rounded-xl px-4 py-2.5 text-sm text-gray-800 focus:ring-amber-500 focus:border-amber-500 shadow-sm outline-none" 
-                 placeholder="https://example.com/sitemap.xml" 
-                 type="text"
-               />
+            {sourceType === 'map' ? (
+              <>
+                {/* Map 模式：域名輸入 + 可選選項 + Fetch 按鈕 */}
+                <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="map-url-input">
+                  Domain / Base URL
+                </label>
+                <input 
+                  id="map-url-input"
+                  value={mapUrl}
+                  onChange={(e) => setMapUrl(e.target.value)}
+                  className="w-full bg-white border border-[#D5C5B5] rounded-xl px-4 py-2.5 text-sm text-gray-800 focus:ring-amber-500 focus:border-amber-500 shadow-sm outline-none" 
+                  placeholder="https://docs.example.com" 
+                  type="text"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Enter a domain or base URL. Firecrawl will discover all accessible pages under it.
+                </p>
+
+                {/* Map 可選篩選參數 */}
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Search Filter (optional)</label>
+                    <input 
+                      value={mapSearch}
+                      onChange={(e) => setMapSearch(e.target.value)}
+                      className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                      placeholder="e.g. docs, api, guide"
+                      type="text"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">URL Limit</label>
+                    <input 
+                      value={mapLimit}
+                      onChange={(e) => setMapLimit(e.target.value)}
+                      className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                      placeholder="5000"
+                      type="number"
+                      min="1"
+                      max="100000"
+                    />
+                  </div>
+                </div>
+
+                {/* Fetch & Map 按鈕 */}
+                <button
+                  onClick={handleMapFetch}
+                  disabled={isMapping}
+                  className={`w-full mt-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    isMapping 
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
+                      : 'bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-700 hover:to-amber-600 text-white shadow-sm'
+                  }`}
+                >
+                  {isMapping ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Mapping domain...
+                    </span>
+                  ) : (
+                    <span className="flex items-center justify-center gap-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path></svg>
+                      Fetch &amp; Map URLs
+                    </span>
+                  )}
+                </button>
+
+                {/* Map 成功提示 */}
+                {mapResultCount !== null && (
+                  <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-xl text-green-700 text-sm flex items-center gap-2">
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
+                    <span>Found <strong>{mapResultCount}</strong> URLs. Switched to Manual mode for review.</span>
+                  </div>
+                )}
+              </>
             ) : (
-               <textarea 
-                 id="source-input"
-                 value={inputValue}
-                 onChange={(e) => setInputValue(e.target.value)}
-                 className="w-full bg-white border border-[#D5C5B5] rounded-xl px-4 py-2.5 text-sm text-gray-800 focus:ring-amber-500 focus:border-amber-500 shadow-sm outline-none resize-y min-h-[100px]" 
-                 placeholder={"https://example.com/page1\nhttps://example.com/page2"} 
-               />
+              <>
+                {/* 原始 Sitemap / Manual 模式 */}
+                <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="source-input">
+                  {sourceType === 'sitemap' ? 'Sitemap / Target URL' : 'List of URLs (comma or newline separated)'}
+                </label>
+                
+                {sourceType === 'sitemap' ? (
+                   <input 
+                     id="source-input"
+                     value={inputValue}
+                     onChange={(e) => setInputValue(e.target.value)}
+                     className="w-full bg-white border border-[#D5C5B5] rounded-xl px-4 py-2.5 text-sm text-gray-800 focus:ring-amber-500 focus:border-amber-500 shadow-sm outline-none" 
+                     placeholder="https://example.com/sitemap.xml" 
+                     type="text"
+                   />
+                ) : (
+                   <textarea 
+                     id="source-input"
+                     value={inputValue}
+                     onChange={(e) => setInputValue(e.target.value)}
+                     className="w-full bg-white border border-[#D5C5B5] rounded-xl px-4 py-2.5 text-sm text-gray-800 focus:ring-amber-500 focus:border-amber-500 shadow-sm outline-none resize-y min-h-[100px]" 
+                     placeholder={"https://example.com/page1\nhttps://example.com/page2"} 
+                   />
+                )}
+                
+                <p className="text-xs text-gray-400 mt-1">
+                   {sourceType === 'sitemap' ? 'Target XML mapping for full site extraction' : 'Provide exact links to be processed instantly.'}
+                </p>
+              </>
             )}
-            
-            <p className="text-xs text-gray-400 mt-1">
-               {sourceType === 'sitemap' ? 'Target XML mapping for full site extraction' : 'Provide exact links to be processed instantly.'}
-            </p>
           </div>
 
           {/* Status Configuration Layout */}
