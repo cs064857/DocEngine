@@ -10,6 +10,7 @@ interface JobTask {
   completed: number;
   failed: number;
   failedUrls: { url: string; error: string }[];
+  retryingUrls?: { url: string; attempts: number; maxRetries: number; error: string }[];
   date: string;
 }
 
@@ -66,6 +67,7 @@ export default function CrawlDocsFrontend() {
   const [depthLimit, setDepthLimit] = useState('0');
   const [maxConcurrency, setMaxConcurrency] = useState('2');
   const [maxUrls, setMaxUrls] = useState('1000');
+  const [maxRetries, setMaxRetries] = useState('3');
   const [enableClean, setEnableClean] = useState(true);
   
   // Content Cleaner 配置
@@ -119,6 +121,7 @@ export default function CrawlDocsFrontend() {
         if (parsed.depthLimit !== undefined) setDepthLimit(parsed.depthLimit);
         if (parsed.maxConcurrency !== undefined) setMaxConcurrency(parsed.maxConcurrency);
         if (parsed.maxUrls !== undefined) setMaxUrls(parsed.maxUrls);
+        if (parsed.maxRetries !== undefined) setMaxRetries(parsed.maxRetries);
         if (parsed.enableClean !== undefined) setEnableClean(parsed.enableClean);
         if (parsed.firecrawlKey !== undefined) setFirecrawlKey(parsed.firecrawlKey);
         if (parsed.llmApiKey !== undefined) setLlmApiKey(parsed.llmApiKey);
@@ -143,7 +146,7 @@ export default function CrawlDocsFrontend() {
   useEffect(() => {
     if (isMounted) {
       const configObj = {
-        depthLimit, maxConcurrency, maxUrls, enableClean,
+        depthLimit, maxConcurrency, maxUrls, maxRetries, enableClean,
         firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt,
         urlExtractorApiKey, urlExtractorBaseUrl, urlExtractorModel, urlExtractorPrompt,
         r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName
@@ -151,7 +154,7 @@ export default function CrawlDocsFrontend() {
       localStorage.setItem('crawldocsConfig', JSON.stringify(configObj));
     }
   }, [
-    isMounted, depthLimit, maxConcurrency, maxUrls, enableClean,
+    isMounted, depthLimit, maxConcurrency, maxUrls, maxRetries, enableClean,
     firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt,
     urlExtractorApiKey, urlExtractorBaseUrl, urlExtractorModel, urlExtractorPrompt,
     r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName
@@ -244,6 +247,7 @@ export default function CrawlDocsFrontend() {
     try {
       const engineSettings = {
         maxUrls,
+        maxRetries,
         enableClean,
         firecrawlKey: firecrawlKey || undefined,
         // Content Cleaner
@@ -594,6 +598,22 @@ export default function CrawlDocsFrontend() {
                                </li>
                              ))}
                            </ul>
+                        </div>
+                       )}
+
+                       {/* Retrying URLs List */}
+                       {taskStatus?.retryingUrls && taskStatus.retryingUrls.length > 0 && (
+                         <div className="mt-2 text-left bg-amber-950/30 border border-amber-800/50 rounded-lg p-3 max-h-32 overflow-y-auto custom-scrollbar">
+                           <div className="text-amber-500 text-[10px] uppercase font-bold tracking-widest mb-2 sticky top-0 bg-amber-950/80 backdrop-blur-sm py-1">Currently Retrying...</div>
+                           <ul className="space-y-2">
+                             {taskStatus.retryingUrls.map((item, idx) => (
+                               <li key={idx} className="text-xs text-amber-200/80 truncate font-mono">
+                                 <span className="text-amber-500 mr-2">[{item.attempts}/{item.maxRetries}]</span>
+                                 <span className="opacity-80" title={item.url}>{item.url}</span>
+                                 <div className="text-amber-400/60 text-[10px] mt-0.5 ml-8 truncate" title={item.error}>{item.error}</div>
+                               </li>
+                             ))}
+                           </ul>
                          </div>
                        )}
                      </div>
@@ -648,6 +668,24 @@ export default function CrawlDocsFrontend() {
                     />
                     <div className="flex space-x-2 text-sm text-gray-700 font-mono font-bold bg-[#FDF8EB] px-2 py-1 rounded border border-gray-200">
                       {maxUrls}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Queue Max Retries</label>
+                  <div className="flex items-center space-x-4">
+                    <input 
+                      type="range" 
+                      min="0" 
+                      max="10" 
+                      step="1"
+                      value={maxRetries}
+                      onChange={(e) => setMaxRetries(e.target.value)}
+                      className="w-24 appearance-none bg-transparent"
+                    />
+                    <div className="flex space-x-2 text-sm text-gray-700 font-mono font-bold bg-[#FDF8EB] px-2 py-1 rounded border border-gray-200">
+                      {maxRetries}
                     </div>
                   </div>
                 </div>

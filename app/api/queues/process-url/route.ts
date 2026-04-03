@@ -6,6 +6,15 @@ import type { R2Overrides } from '@/lib/r2';
 import { buildR2Key } from '@/lib/utils/helpers';
 import { config } from '@/lib/config';
 
+class QueueRetryError extends Error {
+  maxRetries: number;
+  constructor(message: string, maxRetries: number) {
+    super(message);
+    this.maxRetries = maxRetries;
+    this.name = 'QueueRetryError';
+  }
+}
+
 // Shape of the payload sent from /api/crawl
 export interface CrawlJobPayload {
   taskId: string;
@@ -27,6 +36,8 @@ export interface CrawlJobPayload {
     urlExtractorBaseUrl?: string;
     urlExtractorModel?: string;
     urlExtractorPrompt?: string;
+    // 專案限額與重試配置
+    maxRetries?: number;
     // R2 儲存覆蓋配置
     r2AccountId?: string;
     r2AccessKeyId?: string;
@@ -96,20 +107,26 @@ export const POST = handleCallback<CrawlJobPayload>(
       console.error(`[Queue] Error processing URL: ${url}`, error);
       
       const r2 = extractR2Overrides(engineSettings);
-      const isFinalAttempt = metadata.deliveryCount >= config.project.retryAttempts;
+      const userMaxRetries = engineSettings?.maxRetries ?? config.project.retryAttempts;
+      const isFinalAttempt = metadata.deliveryCount >= userMaxRetries;
       
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
       if (isFinalAttempt) {
          console.log(`[Queue] Max retries reached for ${url}. Marking as failed.`);
-         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
          await updateTaskStatus(taskId, url, false, errorMessage, r2);
+      } else {
+         console.log(`[Queue] Attempt ${metadata.deliveryCount}/${userMaxRetries} failed for ${url}. Logging retry to R2.`);
+         await logRetryAttempt(taskId, url, metadata.deliveryCount, userMaxRetries, errorMessage, r2);
       }
       
-      throw error; 
+      throw new QueueRetryError(errorMessage, userMaxRetries); 
     }
   },
   {
     retry: (error, metadata) => {
-      if (metadata.deliveryCount > config.project.retryAttempts) {
+      const maxRetries = error instanceof QueueRetryError ? error.maxRetries : config.project.retryAttempts;
+      if (metadata.deliveryCount > maxRetries) {
         return { acknowledge: true };
       }
       const delay = Math.min(120, Math.pow(2, metadata.deliveryCount) * 10);
@@ -137,6 +154,10 @@ async function updateTaskStatus(taskId: string, url: string, success: boolean, e
       taskStatus.failedUrls.push({ url, error: errorMessage || 'Unknown' });
     }
 
+    if (taskStatus.retryingUrls) {
+      taskStatus.retryingUrls = taskStatus.retryingUrls.filter(r => r.url !== url);
+    }
+
     if ((taskStatus.completed + taskStatus.failed) >= taskStatus.total) {
       taskStatus.status = 'completed';
       console.log(`[Queue] Task ${taskId} has completed all URLs`);
@@ -145,5 +166,30 @@ async function updateTaskStatus(taskId: string, url: string, success: boolean, e
     await putTaskStatus(taskId, taskStatus, r2);
   } catch (error) {
     console.error(`[Queue] Failed to update task status for ${url}`, error);
+  }
+}
+
+/**
+ * 寫入重試狀態到 R2
+ */
+async function logRetryAttempt(taskId: string, url: string, attempts: number, maxRetries: number, errorMsg: string, r2?: R2Overrides) {
+  try {
+    const taskStatus = await getTaskStatus(taskId, r2);
+    if (!taskStatus) return;
+    
+    if (!taskStatus.retryingUrls) {
+      taskStatus.retryingUrls = [];
+    }
+
+    const existingIndex = taskStatus.retryingUrls.findIndex(r => r.url === url);
+    if (existingIndex >= 0) {
+      taskStatus.retryingUrls[existingIndex] = { url, attempts, maxRetries, error: errorMsg };
+    } else {
+      taskStatus.retryingUrls.push({ url, attempts, maxRetries, error: errorMsg });
+    }
+    
+    await putTaskStatus(taskId, taskStatus, r2);
+  } catch (error) {
+    console.error(`[Queue] Failed to log retry attempt for ${url}`, error);
   }
 }

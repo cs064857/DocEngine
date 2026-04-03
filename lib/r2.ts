@@ -9,6 +9,7 @@ export interface JobTask {
   completed: number;
   failed: number;
   failedUrls: { url: string; error: string }[];
+  retryingUrls?: { url: string; attempts: number; maxRetries: number; error: string }[];
   date: string;
 }
 

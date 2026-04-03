@@ -61,6 +61,7 @@ export async function POST(req: NextRequest) {
       completed: 0,
       failed: 0,
       failedUrls: [],
+      retryingUrls: [],
       date,
     }, r2Overrides);
 
