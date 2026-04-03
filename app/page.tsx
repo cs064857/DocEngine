@@ -88,6 +88,12 @@ export default function CrawlDocsFrontend() {
   const [mapLimit, setMapLimit] = useState('5000');
   const [isMapping, setIsMapping] = useState(false);
   const [mapResultCount, setMapResultCount] = useState<number | null>(null);
+
+  // Cloudflare R2 儲存配置
+  const [r2AccountId, setR2AccountId] = useState('');
+  const [r2AccessKeyId, setR2AccessKeyId] = useState('');
+  const [r2SecretAccessKey, setR2SecretAccessKey] = useState('');
+  const [r2BucketName, setR2BucketName] = useState('');
   
   // Job Tracking
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -118,6 +124,10 @@ export default function CrawlDocsFrontend() {
         if (parsed.urlExtractorBaseUrl !== undefined) setUrlExtractorBaseUrl(parsed.urlExtractorBaseUrl);
         if (parsed.urlExtractorModel !== undefined) setUrlExtractorModel(parsed.urlExtractorModel);
         if (parsed.urlExtractorPrompt !== undefined) setUrlExtractorPrompt(parsed.urlExtractorPrompt);
+        if (parsed.r2AccountId !== undefined) setR2AccountId(parsed.r2AccountId);
+        if (parsed.r2AccessKeyId !== undefined) setR2AccessKeyId(parsed.r2AccessKeyId);
+        if (parsed.r2SecretAccessKey !== undefined) setR2SecretAccessKey(parsed.r2SecretAccessKey);
+        if (parsed.r2BucketName !== undefined) setR2BucketName(parsed.r2BucketName);
       } catch (e) {
         console.error("Failed to parse config from localStorage", e);
       }
@@ -130,14 +140,16 @@ export default function CrawlDocsFrontend() {
       const configObj = {
         depthLimit, maxConcurrency, maxUrls, enableClean,
         firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt,
-        urlExtractorApiKey, urlExtractorBaseUrl, urlExtractorModel, urlExtractorPrompt
+        urlExtractorApiKey, urlExtractorBaseUrl, urlExtractorModel, urlExtractorPrompt,
+        r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName
       };
       localStorage.setItem('crawldocsConfig', JSON.stringify(configObj));
     }
   }, [
     isMounted, depthLimit, maxConcurrency, maxUrls, enableClean,
     firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt,
-    urlExtractorApiKey, urlExtractorBaseUrl, urlExtractorModel, urlExtractorPrompt
+    urlExtractorApiKey, urlExtractorBaseUrl, urlExtractorModel, urlExtractorPrompt,
+    r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName
   ]);
 
   // Polling Effect
@@ -146,7 +158,21 @@ export default function CrawlDocsFrontend() {
 
     const fetchStatus = async () => {
       try {
-        const res = await fetch(`/api/status/${taskId}`);
+        // 若有 R2 覆蓋配置，使用 POST 傳送認證；否則退回 GET
+        const hasR2Overrides = r2AccountId || r2AccessKeyId || r2SecretAccessKey;
+        const res = hasR2Overrides
+          ? await fetch(`/api/status/${taskId}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                r2AccountId: r2AccountId || undefined,
+                r2AccessKeyId: r2AccessKeyId || undefined,
+                r2SecretAccessKey: r2SecretAccessKey || undefined,
+                r2BucketName: r2BucketName || undefined,
+              }),
+            })
+          : await fetch(`/api/status/${taskId}`);
+
         if (res.ok) {
           const data = await res.json();
           setTaskStatus(data);
@@ -193,6 +219,11 @@ export default function CrawlDocsFrontend() {
         urlExtractorBaseUrl: urlExtractorBaseUrl || undefined,
         urlExtractorModel: urlExtractorModel || undefined,
         urlExtractorPrompt: urlExtractorPrompt !== DEFAULT_URL_EXTRACTOR_PROMPT ? urlExtractorPrompt : undefined,
+        // Cloudflare R2 Storage
+        r2AccountId: r2AccountId || undefined,
+        r2AccessKeyId: r2AccessKeyId || undefined,
+        r2SecretAccessKey: r2SecretAccessKey || undefined,
+        r2BucketName: r2BucketName || undefined,
       };
 
       const res = await fetch('/api/crawl', {
@@ -744,6 +775,44 @@ export default function CrawlDocsFrontend() {
                       </div>
                     )}
                   </div>
+                </div>
+
+                {/* Cloudflare R2 Storage 卡片 */}
+                <div className="bg-white rounded-xl p-4 border border-[#E5D5C5]">
+                  <h3 className="text-sm font-semibold text-gray-800 mb-3">Cloudflare R2 Storage</h3>
+                  <p className="text-[10px] text-gray-400 mb-3">Configure R2 bucket credentials for storing crawl results. Leave blank to use server environment defaults.</p>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Account ID</label>
+                  <input 
+                    value={r2AccountId}
+                    onChange={(e) => setR2AccountId(e.target.value)}
+                    placeholder="Cloudflare Account ID (Leave blank for default env)" 
+                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                    type="text" 
+                  />
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Access Key ID</label>
+                  <input 
+                    value={r2AccessKeyId}
+                    onChange={(e) => setR2AccessKeyId(e.target.value)}
+                    placeholder="R2 Access Key ID (Leave blank for default env)" 
+                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                    type="password" 
+                  />
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Secret Access Key</label>
+                  <input 
+                    value={r2SecretAccessKey}
+                    onChange={(e) => setR2SecretAccessKey(e.target.value)}
+                    placeholder="R2 Secret Access Key (Leave blank for default env)" 
+                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                    type="password" 
+                  />
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Bucket Name</label>
+                  <input 
+                    value={r2BucketName}
+                    onChange={(e) => setR2BucketName(e.target.value)}
+                    placeholder="crawldocs (Leave blank for default)" 
+                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 outline-none focus:ring-amber-500 focus:border-amber-500" 
+                    type="text" 
+                  />
                 </div>
               </div>
             </div>

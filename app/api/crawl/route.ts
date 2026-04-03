@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { send } from '@vercel/queue';
 import { extractUrls } from '@/lib/processors/url-extractor';
 import { putTaskStatus } from '@/lib/r2';
+import type { R2Overrides } from '@/lib/r2';
 import { generateTaskId, formatDate } from '@/lib/utils/helpers';
 import { config } from '@/lib/config';
 
@@ -42,6 +43,16 @@ export async function POST(req: NextRequest) {
 
     console.log(`[API Crawl] Extracted ${urls.length} URLs. Creating task: ${taskId}`);
 
+    // 組合 R2 覆蓋配置（來自前端 UI）
+    const r2Overrides: R2Overrides | undefined = (
+      engineSettings?.r2AccountId || engineSettings?.r2AccessKeyId || engineSettings?.r2SecretAccessKey
+    ) ? {
+      accountId: engineSettings?.r2AccountId,
+      accessKeyId: engineSettings?.r2AccessKeyId,
+      secretAccessKey: engineSettings?.r2SecretAccessKey,
+      bucketName: engineSettings?.r2BucketName,
+    } : undefined;
+
     // Create tracking metadata
     await putTaskStatus(taskId, {
       taskId,
@@ -51,7 +62,7 @@ export async function POST(req: NextRequest) {
       failed: 0,
       failedUrls: [],
       date,
-    });
+    }, r2Overrides);
 
     // Send jobs to queue topic 'crawl-urls'
     console.log(`[API Crawl] Sending ${urls.length} messages to Queue...`);
