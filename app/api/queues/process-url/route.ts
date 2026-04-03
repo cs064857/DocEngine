@@ -82,8 +82,8 @@ export const POST = handleCallback<CrawlJobPayload>(
 
       let cleanedMarkdown = rawMarkdown;
 
-      // 3. LLM clean (Only runs if enableClean is missing or strictly true)
-      if (engineSettings?.enableClean !== false) {
+      // 3. LLM clean (Only runs if enableClean is missing or strictly true, and rawMarkdown is not empty)
+      if (engineSettings?.enableClean !== false && rawMarkdown.trim().length > 0) {
         const cleanerConfig = {
            model: engineSettings?.llmModel,
            apiKey: engineSettings?.llmApiKey,

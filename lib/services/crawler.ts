@@ -39,6 +39,7 @@ export async function scrapeUrl(url: string, overrides?: CrawlerOverrides): Prom
   // Notice we only scrape for markdown format, as per the Python original
   const scrapeResult = await firecrawl.scrapeUrl(url, {
     formats: ['markdown'],
+    timeout: 60000, // 增加 timeout 到 60 秒以防 408 錯誤
   });
 
   if (!scrapeResult.success) {
