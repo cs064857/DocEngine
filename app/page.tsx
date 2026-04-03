@@ -476,7 +476,12 @@ export default function CrawlDocsFrontend() {
         setCrawlStatusText('Exploring website... gathering links...');
         await new Promise(r => setTimeout(r, 4000)); // wait 4 seconds
 
-        const pollRes = await fetch(`/api/crawl-job?jobId=${jobId}`);
+        const pollUrl = new URL(window.location.origin + '/api/crawl-job');
+        pollUrl.searchParams.append('jobId', jobId);
+        if (firecrawlKey) {
+          pollUrl.searchParams.append('apiKey', firecrawlKey);
+        }
+        const pollRes = await fetch(pollUrl.toString());
         const pollData = await pollRes.json();
 
         if (!pollRes.ok) throw new Error(pollData.error || 'Polling failed');
