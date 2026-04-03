@@ -58,6 +58,7 @@ Output ONLY a valid JSON object containing a "urls" key mapped to an array of st
 If no valid URLs are found, output {"urls": []}. Do not output any markdown formatting, only pure JSON.`;
 
 export default function CrawlDocsFrontend() {
+  const [activeTab, setActiveTab] = useState<'tasks' | 'create' | 'storage' | 'settings'>('create');
   const [sourceType, setSourceType] = useState<'sitemap' | 'manual' | 'map'>('sitemap');
   const [inputValue, setInputValue] = useState('');
   
@@ -313,18 +314,31 @@ export default function CrawlDocsFrontend() {
         <div className="text-2xl font-bold tracking-tight text-gray-900">
           CrawlDocs
         </div>
-        <nav className="flex space-x-6 text-sm font-medium">
-          <a className="text-gray-500 hover:text-gray-900 transition-colors" href="#">Tasks</a>
-          <a className="text-amber-700 border-b-2 border-amber-700 pb-1" href="#">Create</a>
-          <a className="text-gray-500 hover:text-gray-900 transition-colors" href="#">Storage (R2)</a>
-          <a className="text-gray-500 hover:text-gray-900 transition-colors" href="#">Settings</a>
+        <nav className="flex space-x-1 text-sm font-medium bg-[#F1EBE0] p-1 rounded-xl">
+          {(['tasks', 'create', 'storage', 'settings'] as const).map((tab) => {
+            const labels = { tasks: 'Tasks', create: 'Create', storage: 'Storage (R2)', settings: 'Settings' };
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-4 py-1.5 rounded-lg transition-all text-sm font-medium ${
+                  activeTab === tab
+                    ? 'bg-white shadow-sm border border-orange-100/50 text-amber-900'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {labels[tab]}
+              </button>
+            );
+          })}
         </nav>
       </header>
 
       {/* Main Content */}
       <main className="max-w-3xl mx-auto px-4 mt-4 relative z-10">
-        
-        {/* Main Card */}
+
+        {/* ==================== CREATE TAB ==================== */}
+        {activeTab === 'create' && (
         <div className="bg-white rounded-[2rem] p-8 custom-shadow stacked-card relative border border-gray-100/50">
           <h1 className="text-3xl font-bold text-gray-900 mb-8 tracking-tight">Create Crawling Task</h1>
           
@@ -469,34 +483,6 @@ export default function CrawlDocsFrontend() {
             )}
           </div>
 
-          {/* Status Configuration Layout */}
-          <div className="grid grid-cols-3 gap-4 mb-8">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Max Depth Limit</label>
-              <select 
-                value={depthLimit}
-                onChange={(e) => setDepthLimit(e.target.value)}
-                className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-xl px-4 py-2 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none"
-              >
-                <option value="0">0 (Infinite)</option>
-                <option value="1">1 Layer</option>
-                <option value="2">2 Layers</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Save Format</label>
-              <select className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-xl px-4 py-2 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none">
-                <option>Markdown (RAG)</option>
-                <option disabled>JSON (Metadata)</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Target Storage</label>
-              <select className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-xl px-4 py-2 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none">
-                <option>Cloudflare R2</option>
-              </select>
-            </div>
-          </div>
 
           {/* Tracker Board */}
           <div className="bg-black rounded-2xl overflow-hidden mb-8 relative aspect-video flex flex-col justify-center items-center shadow-inner border border-gray-900 border-opacity-50">
@@ -568,9 +554,9 @@ export default function CrawlDocsFrontend() {
               <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 15l7-7 7 7"></path></svg>
             </div>
             
-            <div className="grid grid-cols-12 gap-8">
-              {/* Left Column */}
-              <div className="col-span-5 space-y-6">
+            <div className="grid grid-cols-2 gap-8">
+              {/* Concurrency & URL Cap */}
+              <div className="space-y-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Max Vercel Concurrency</label>
                   <div className="flex items-center space-x-3">
@@ -624,195 +610,33 @@ export default function CrawlDocsFrontend() {
                   </div>
                 </div>
               </div>
-              
-              {/* Right Column: AI APIs Mapping */}
-              <div className="col-span-7 space-y-4">
-                {/* Scraping Processor 卡片 */}
-                <div className="bg-white rounded-xl p-4 border border-[#E5D5C5]">
-                  <h3 className="text-sm font-semibold text-gray-800 mb-3">Scraping Processor</h3>
-                  <input 
-                    value={firecrawlKey}
-                    onChange={(e) => setFirecrawlKey(e.target.value)}
-                    placeholder="API Key (Leave blank for default env)" 
-                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
-                    type="password" 
-                  />
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Provider Engine</label>
-                  <select className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 appearance-none outline-none">
-                    <option>Firecrawl (mendable)</option>
+
+              {/* Status Configs */}
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Max Depth Limit</label>
+                  <select 
+                    value={depthLimit}
+                    onChange={(e) => setDepthLimit(e.target.value)}
+                    className="w-full bg-white border border-[#E5D5C5] rounded-xl px-4 py-2 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                  >
+                    <option value="0">0 (Infinite)</option>
+                    <option value="1">1 Layer</option>
+                    <option value="2">2 Layers</option>
                   </select>
                 </div>
-                
-                {/* LLM Content Cleaner 卡片 */}
-                <div className="bg-white rounded-xl p-4 border border-[#E5D5C5]">
-                  <h3 className="text-sm font-semibold text-gray-800 mb-3">LLM Content Cleaner</h3>
-                  <input 
-                    value={llmApiKey}
-                    onChange={(e) => setLlmApiKey(e.target.value)}
-                    placeholder="API Key (Leave blank for default env)" 
-                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
-                    type="password" 
-                  />
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Base URL</label>
-                  <input 
-                    value={llmBaseUrl}
-                    onChange={(e) => setLlmBaseUrl(e.target.value)}
-                    placeholder="e.g. https://open.bigmodel.cn/api/paas/v4/ (Leave blank for default)" 
-                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
-                    type="text" 
-                  />
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Model</label>
-                  <input 
-                    list="cleaner-model-suggestions"
-                    value={llmModelName}
-                    onChange={(e) => setLlmModelName(e.target.value)}
-                    placeholder="Enter model name..."
-                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 appearance-none outline-none focus:ring-amber-500 focus:border-amber-500"
-                  />
-                  <datalist id="cleaner-model-suggestions">
-                    <option value="glm-4-flash" />
-                    <option value="deepseek-chat" />
-                    <option value="gpt-4o-mini" />
-                    <option value="qwen-turbo" />
-                    <option value="claude-3-haiku-20240307" />
-                  </datalist>
-
-                  {/* 可折疊的自訂 Prompt */}
-                  <div className="mt-3 border-t border-[#E5D5C5] pt-3">
-                    <button
-                      type="button"
-                      onClick={() => setShowCleaningPrompt(!showCleaningPrompt)}
-                      className="flex items-center justify-between w-full text-xs font-medium text-gray-600 hover:text-gray-900 transition-colors"
-                    >
-                      <span>Custom Cleaning Prompt</span>
-                      <svg className={`w-4 h-4 transition-transform ${showCleaningPrompt ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                    </button>
-                    {showCleaningPrompt && (
-                      <div className="mt-2">
-                        <textarea
-                          value={cleaningPrompt}
-                          onChange={(e) => setCleaningPrompt(e.target.value)}
-                          className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-xs text-gray-700 outline-none focus:ring-amber-500 focus:border-amber-500 resize-y min-h-[120px] max-h-[300px] font-mono leading-relaxed"
-                          rows={8}
-                        />
-                        <div className="flex justify-between items-center mt-1">
-                          <span className="text-[10px] text-gray-400">{cleaningPrompt.length} chars</span>
-                          <button
-                            type="button"
-                            onClick={() => setCleaningPrompt(DEFAULT_CLEANING_PROMPT)}
-                            className="text-[10px] text-amber-700 hover:text-amber-900 transition-colors underline"
-                          >
-                            Reset to default
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Save Format</label>
+                  <select className="w-full bg-white border border-[#E5D5C5] rounded-xl px-4 py-2 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none">
+                    <option>Markdown (RAG)</option>
+                    <option disabled>JSON (Metadata)</option>
+                  </select>
                 </div>
-
-                {/* URL Extractor 卡片（新增） */}
-                <div className="bg-white rounded-xl p-4 border border-[#E5D5C5]">
-                  <h3 className="text-sm font-semibold text-gray-800 mb-3">URL Extractor (LLM)</h3>
-                  <p className="text-[10px] text-gray-400 mb-3">Used when extracting URLs from raw text input. Not needed for sitemap URLs.</p>
-                  <input 
-                    value={urlExtractorApiKey}
-                    onChange={(e) => setUrlExtractorApiKey(e.target.value)}
-                    placeholder="API Key (Leave blank for default env)" 
-                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
-                    type="password" 
-                  />
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Base URL</label>
-                  <input 
-                    value={urlExtractorBaseUrl}
-                    onChange={(e) => setUrlExtractorBaseUrl(e.target.value)}
-                    placeholder="e.g. https://api.deepseek.com/v1 (Leave blank for default)" 
-                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
-                    type="text" 
-                  />
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Model</label>
-                  <input 
-                    list="extractor-model-suggestions"
-                    value={urlExtractorModel}
-                    onChange={(e) => setUrlExtractorModel(e.target.value)}
-                    placeholder="e.g. deepseek-chat (Leave blank for default)"
-                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 appearance-none outline-none focus:ring-amber-500 focus:border-amber-500"
-                  />
-                  <datalist id="extractor-model-suggestions">
-                    <option value="deepseek-chat" />
-                    <option value="glm-4-flash" />
-                    <option value="gpt-4o-mini" />
-                    <option value="qwen-turbo" />
-                  </datalist>
-
-                  {/* 可折疊的自訂 Prompt */}
-                  <div className="mt-3 border-t border-[#E5D5C5] pt-3">
-                    <button
-                      type="button"
-                      onClick={() => setShowUrlExtractorPrompt(!showUrlExtractorPrompt)}
-                      className="flex items-center justify-between w-full text-xs font-medium text-gray-600 hover:text-gray-900 transition-colors"
-                    >
-                      <span>Custom Extractor Prompt</span>
-                      <svg className={`w-4 h-4 transition-transform ${showUrlExtractorPrompt ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                    </button>
-                    {showUrlExtractorPrompt && (
-                      <div className="mt-2">
-                        <textarea
-                          value={urlExtractorPrompt}
-                          onChange={(e) => setUrlExtractorPrompt(e.target.value)}
-                          className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-xs text-gray-700 outline-none focus:ring-amber-500 focus:border-amber-500 resize-y min-h-[80px] max-h-[200px] font-mono leading-relaxed"
-                          rows={4}
-                        />
-                        <div className="flex justify-between items-center mt-1">
-                          <span className="text-[10px] text-gray-400">{urlExtractorPrompt.length} chars</span>
-                          <button
-                            type="button"
-                            onClick={() => setUrlExtractorPrompt(DEFAULT_URL_EXTRACTOR_PROMPT)}
-                            className="text-[10px] text-amber-700 hover:text-amber-900 transition-colors underline"
-                          >
-                            Reset to default
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Cloudflare R2 Storage 卡片 */}
-                <div className="bg-white rounded-xl p-4 border border-[#E5D5C5]">
-                  <h3 className="text-sm font-semibold text-gray-800 mb-3">Cloudflare R2 Storage</h3>
-                  <p className="text-[10px] text-gray-400 mb-3">Configure R2 bucket credentials for storing crawl results. Leave blank to use server environment defaults.</p>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Account ID</label>
-                  <input 
-                    value={r2AccountId}
-                    onChange={(e) => setR2AccountId(e.target.value)}
-                    placeholder="Cloudflare Account ID (Leave blank for default env)" 
-                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
-                    type="text" 
-                  />
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Access Key ID</label>
-                  <input 
-                    value={r2AccessKeyId}
-                    onChange={(e) => setR2AccessKeyId(e.target.value)}
-                    placeholder="R2 Access Key ID (Leave blank for default env)" 
-                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
-                    type="password" 
-                  />
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Secret Access Key</label>
-                  <input 
-                    value={r2SecretAccessKey}
-                    onChange={(e) => setR2SecretAccessKey(e.target.value)}
-                    placeholder="R2 Secret Access Key (Leave blank for default env)" 
-                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 mb-3 focus:ring-amber-500 focus:border-amber-500 outline-none" 
-                    type="password" 
-                  />
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Bucket Name</label>
-                  <input 
-                    value={r2BucketName}
-                    onChange={(e) => setR2BucketName(e.target.value)}
-                    placeholder="crawldocs (Leave blank for default)" 
-                    className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 outline-none focus:ring-amber-500 focus:border-amber-500" 
-                    type="text" 
-                  />
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Target Storage</label>
+                  <select className="w-full bg-white border border-[#E5D5C5] rounded-xl px-4 py-2 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none">
+                    <option>Cloudflare R2</option>
+                  </select>
                 </div>
               </div>
             </div>
@@ -827,7 +651,279 @@ export default function CrawlDocsFrontend() {
             {isSubmitting ? 'Starting Engine...' : 'Initialize Crawl'}
           </button>
         </div>
+        )}
+
+        {/* ==================== STORAGE (R2) TAB ==================== */}
+        {activeTab === 'storage' && (
+        <div className="bg-white rounded-[2rem] p-8 custom-shadow stacked-card relative border border-gray-100/50">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2 tracking-tight">Storage (R2)</h1>
+          <p className="text-sm text-gray-500 mb-8">Configure Cloudflare R2 bucket credentials for storing crawl results. Leave blank to use server environment defaults.</p>
+
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Account ID</label>
+                <input 
+                  value={r2AccountId}
+                  onChange={(e) => setR2AccountId(e.target.value)}
+                  placeholder="Cloudflare Account ID" 
+                  className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-xl px-4 py-2.5 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                  type="text" 
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Bucket Name</label>
+                <input 
+                  value={r2BucketName}
+                  onChange={(e) => setR2BucketName(e.target.value)}
+                  placeholder="crawldocs" 
+                  className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-xl px-4 py-2.5 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                  type="text" 
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Access Key ID</label>
+              <input 
+                value={r2AccessKeyId}
+                onChange={(e) => setR2AccessKeyId(e.target.value)}
+                placeholder="R2 Access Key ID" 
+                className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-xl px-4 py-2.5 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                type="password" 
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Secret Access Key</label>
+              <input 
+                value={r2SecretAccessKey}
+                onChange={(e) => setR2SecretAccessKey(e.target.value)}
+                placeholder="R2 Secret Access Key" 
+                className="w-full bg-[#F8F5EE] border border-[#E5D5C5] rounded-xl px-4 py-2.5 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                type="password" 
+              />
+            </div>
+
+            {/* 連線狀態指示 */}
+            <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
+              <div className={`w-2 h-2 rounded-full ${r2AccountId && r2AccessKeyId && r2SecretAccessKey ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+              <span className="text-xs text-gray-500">
+                {r2AccountId && r2AccessKeyId && r2SecretAccessKey 
+                  ? 'Credentials configured (using custom)'
+                  : 'No custom credentials — will use server environment defaults'
+                }
+              </span>
+            </div>
+          </div>
+        </div>
+        )}
+
+        {/* ==================== SETTINGS TAB ==================== */}
+        {activeTab === 'settings' && (
+        <div className="bg-white rounded-[2rem] p-8 custom-shadow stacked-card relative border border-gray-100/50">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2 tracking-tight">Settings</h1>
+          <p className="text-sm text-gray-500 mb-8">Configure API keys and models for scraping, content cleaning, and URL extraction.</p>
+
+          <div className="space-y-6">
+            {/* Scraping Processor */}
+            <div className="bg-[#F8F5EE] rounded-2xl p-6 border border-[#E5D5C5]">
+              <h2 className="text-lg font-semibold text-gray-800 mb-4">Scraping Processor</h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">API Key</label>
+                  <input 
+                    value={firecrawlKey}
+                    onChange={(e) => setFirecrawlKey(e.target.value)}
+                    placeholder="Firecrawl API Key (Leave blank for default env)" 
+                    className="w-full bg-white border border-[#E5D5C5] rounded-xl px-4 py-2.5 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                    type="password" 
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Provider Engine</label>
+                  <select className="w-full bg-white border border-[#E5D5C5] rounded-xl px-4 py-2.5 text-sm text-gray-700 appearance-none outline-none">
+                    <option>Firecrawl (mendable)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* LLM Content Cleaner */}
+            <div className="bg-[#F8F5EE] rounded-2xl p-6 border border-[#E5D5C5]">
+              <h2 className="text-lg font-semibold text-gray-800 mb-4">LLM Content Cleaner</h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">API Key</label>
+                  <input 
+                    value={llmApiKey}
+                    onChange={(e) => setLlmApiKey(e.target.value)}
+                    placeholder="API Key (Leave blank for default env)" 
+                    className="w-full bg-white border border-[#E5D5C5] rounded-xl px-4 py-2.5 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                    type="password" 
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Base URL</label>
+                    <input 
+                      value={llmBaseUrl}
+                      onChange={(e) => setLlmBaseUrl(e.target.value)}
+                      placeholder="e.g. https://open.bigmodel.cn/api/paas/v4/" 
+                      className="w-full bg-white border border-[#E5D5C5] rounded-xl px-4 py-2.5 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                      type="text" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Model</label>
+                    <input 
+                      list="cleaner-model-suggestions"
+                      value={llmModelName}
+                      onChange={(e) => setLlmModelName(e.target.value)}
+                      placeholder="Enter model name..."
+                      className="w-full bg-white border border-[#E5D5C5] rounded-xl px-4 py-2.5 text-sm text-gray-700 appearance-none outline-none focus:ring-amber-500 focus:border-amber-500"
+                    />
+                    <datalist id="cleaner-model-suggestions">
+                      <option value="glm-4-flash" />
+                      <option value="deepseek-chat" />
+                      <option value="gpt-4o-mini" />
+                      <option value="qwen-turbo" />
+                      <option value="claude-3-haiku-20240307" />
+                    </datalist>
+                  </div>
+                </div>
+
+                {/* 可折疊的自訂 Prompt */}
+                <div className="border-t border-[#E5D5C5] pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowCleaningPrompt(!showCleaningPrompt)}
+                    className="flex items-center justify-between w-full text-xs font-medium text-gray-600 hover:text-gray-900 transition-colors"
+                  >
+                    <span>Custom Cleaning Prompt</span>
+                    <svg className={`w-4 h-4 transition-transform ${showCleaningPrompt ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                  </button>
+                  {showCleaningPrompt && (
+                    <div className="mt-2">
+                      <textarea
+                        value={cleaningPrompt}
+                        onChange={(e) => setCleaningPrompt(e.target.value)}
+                        className="w-full bg-white border border-[#E5D5C5] rounded-lg px-3 py-2 text-xs text-gray-700 outline-none focus:ring-amber-500 focus:border-amber-500 resize-y min-h-[120px] max-h-[300px] font-mono leading-relaxed"
+                        rows={8}
+                      />
+                      <div className="flex justify-between items-center mt-1">
+                        <span className="text-[10px] text-gray-400">{cleaningPrompt.length} chars</span>
+                        <button
+                          type="button"
+                          onClick={() => setCleaningPrompt(DEFAULT_CLEANING_PROMPT)}
+                          className="text-[10px] text-amber-700 hover:text-amber-900 transition-colors underline"
+                        >
+                          Reset to default
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* URL Extractor */}
+            <div className="bg-[#F8F5EE] rounded-2xl p-6 border border-[#E5D5C5]">
+              <h2 className="text-lg font-semibold text-gray-800 mb-1">URL Extractor (LLM)</h2>
+              <p className="text-xs text-gray-400 mb-4">Used when extracting URLs from raw text input. Not needed for sitemap URLs.</p>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">API Key</label>
+                  <input 
+                    value={urlExtractorApiKey}
+                    onChange={(e) => setUrlExtractorApiKey(e.target.value)}
+                    placeholder="API Key (Leave blank for default env)" 
+                    className="w-full bg-white border border-[#E5D5C5] rounded-xl px-4 py-2.5 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                    type="password" 
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Base URL</label>
+                    <input 
+                      value={urlExtractorBaseUrl}
+                      onChange={(e) => setUrlExtractorBaseUrl(e.target.value)}
+                      placeholder="e.g. https://api.deepseek.com/v1" 
+                      className="w-full bg-white border border-[#E5D5C5] rounded-xl px-4 py-2.5 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                      type="text" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Model</label>
+                    <input 
+                      list="extractor-model-suggestions"
+                      value={urlExtractorModel}
+                      onChange={(e) => setUrlExtractorModel(e.target.value)}
+                      placeholder="e.g. deepseek-chat"
+                      className="w-full bg-white border border-[#E5D5C5] rounded-xl px-4 py-2.5 text-sm text-gray-700 appearance-none outline-none focus:ring-amber-500 focus:border-amber-500"
+                    />
+                    <datalist id="extractor-model-suggestions">
+                      <option value="deepseek-chat" />
+                      <option value="glm-4-flash" />
+                      <option value="gpt-4o-mini" />
+                      <option value="qwen-turbo" />
+                    </datalist>
+                  </div>
+                </div>
+
+                {/* 可折疊的自訂 Prompt */}
+                <div className="border-t border-[#E5D5C5] pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowUrlExtractorPrompt(!showUrlExtractorPrompt)}
+                    className="flex items-center justify-between w-full text-xs font-medium text-gray-600 hover:text-gray-900 transition-colors"
+                  >
+                    <span>Custom Extractor Prompt</span>
+                    <svg className={`w-4 h-4 transition-transform ${showUrlExtractorPrompt ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                  </button>
+                  {showUrlExtractorPrompt && (
+                    <div className="mt-2">
+                      <textarea
+                        value={urlExtractorPrompt}
+                        onChange={(e) => setUrlExtractorPrompt(e.target.value)}
+                        className="w-full bg-white border border-[#E5D5C5] rounded-lg px-3 py-2 text-xs text-gray-700 outline-none focus:ring-amber-500 focus:border-amber-500 resize-y min-h-[80px] max-h-[200px] font-mono leading-relaxed"
+                        rows={4}
+                      />
+                      <div className="flex justify-between items-center mt-1">
+                        <span className="text-[10px] text-gray-400">{urlExtractorPrompt.length} chars</span>
+                        <button
+                          type="button"
+                          onClick={() => setUrlExtractorPrompt(DEFAULT_URL_EXTRACTOR_PROMPT)}
+                          className="text-[10px] text-amber-700 hover:text-amber-900 transition-colors underline"
+                        >
+                          Reset to default
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        )}
+
+        {/* ==================== TASKS TAB ==================== */}
+        {activeTab === 'tasks' && (
+        <div className="bg-white rounded-[2rem] p-8 custom-shadow stacked-card relative border border-gray-100/50">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2 tracking-tight">Tasks</h1>
+          <p className="text-sm text-gray-500 mb-8">View and manage your crawling tasks.</p>
+
+          <div className="text-center py-16 opacity-60">
+            <div className="mx-auto w-16 h-16 bg-[#F8F5EE] rounded-full flex items-center justify-center mb-4 border border-[#E5D5C5]">
+              <svg className="w-8 h-8 text-amber-500/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+            </div>
+            <h3 className="text-gray-600 font-semibold text-sm">No task history yet</h3>
+            <p className="text-gray-400 text-xs mt-2">Tasks created from the Create tab will appear here.</p>
+          </div>
+        </div>
+        )}
+
       </main>
     </div>
   );
 }
+
