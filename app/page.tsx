@@ -88,6 +88,51 @@ export default function CrawlDocsFrontend() {
   const [taskStatus, setTaskStatus] = useState<JobTask | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // Hydration state for localStorage
+  const [isMounted, setIsMounted] = useState(false);
+
+  // Load configuration from localStorage on mount
+  useEffect(() => {
+    setIsMounted(true);
+    const savedConfig = localStorage.getItem('crawldocsConfig');
+    if (savedConfig) {
+      try {
+        const parsed = JSON.parse(savedConfig);
+        if (parsed.depthLimit !== undefined) setDepthLimit(parsed.depthLimit);
+        if (parsed.maxConcurrency !== undefined) setMaxConcurrency(parsed.maxConcurrency);
+        if (parsed.maxUrls !== undefined) setMaxUrls(parsed.maxUrls);
+        if (parsed.enableClean !== undefined) setEnableClean(parsed.enableClean);
+        if (parsed.firecrawlKey !== undefined) setFirecrawlKey(parsed.firecrawlKey);
+        if (parsed.llmApiKey !== undefined) setLlmApiKey(parsed.llmApiKey);
+        if (parsed.llmModelName !== undefined) setLlmModelName(parsed.llmModelName);
+        if (parsed.llmBaseUrl !== undefined) setLlmBaseUrl(parsed.llmBaseUrl);
+        if (parsed.cleaningPrompt !== undefined) setCleaningPrompt(parsed.cleaningPrompt);
+        if (parsed.urlExtractorApiKey !== undefined) setUrlExtractorApiKey(parsed.urlExtractorApiKey);
+        if (parsed.urlExtractorBaseUrl !== undefined) setUrlExtractorBaseUrl(parsed.urlExtractorBaseUrl);
+        if (parsed.urlExtractorModel !== undefined) setUrlExtractorModel(parsed.urlExtractorModel);
+        if (parsed.urlExtractorPrompt !== undefined) setUrlExtractorPrompt(parsed.urlExtractorPrompt);
+      } catch (e) {
+        console.error("Failed to parse config from localStorage", e);
+      }
+    }
+  }, []);
+
+  // Save configuration to localStorage on change
+  useEffect(() => {
+    if (isMounted) {
+      const configObj = {
+        depthLimit, maxConcurrency, maxUrls, enableClean,
+        firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt,
+        urlExtractorApiKey, urlExtractorBaseUrl, urlExtractorModel, urlExtractorPrompt
+      };
+      localStorage.setItem('crawldocsConfig', JSON.stringify(configObj));
+    }
+  }, [
+    isMounted, depthLimit, maxConcurrency, maxUrls, enableClean,
+    firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt,
+    urlExtractorApiKey, urlExtractorBaseUrl, urlExtractorModel, urlExtractorPrompt
+  ]);
+
   // Polling Effect
   useEffect(() => {
     if (!taskId) return;
