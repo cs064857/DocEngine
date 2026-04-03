@@ -60,7 +60,7 @@ If no valid URLs are found, output {"urls": []}. Do not output any markdown form
 
 export default function CrawlDocsFrontend() {
   const [activeTab, setActiveTab] = useState<'tasks' | 'create' | 'storage' | 'settings'>('create');
-  const [sourceType, setSourceType] = useState<'sitemap' | 'manual' | 'map'>('sitemap');
+  const [sourceType, setSourceType] = useState<'sitemap' | 'manual' | 'map' | 'scrape'>('sitemap');
   const [inputValue, setInputValue] = useState('');
   
   // Advanced parameters
@@ -91,6 +91,28 @@ export default function CrawlDocsFrontend() {
   const [mapLimit, setMapLimit] = useState('5000');
   const [isMapping, setIsMapping] = useState(false);
   const [mapResultCount, setMapResultCount] = useState<number | null>(null);
+
+  // Firecrawl Scrape 配置
+  const [scrapeTargetUrl, setScrapeTargetUrl] = useState('');
+  const [scrapeWaitFor, setScrapeWaitFor] = useState('');
+  const [scrapeTimeout, setScrapeTimeout] = useState('');
+  const [scrapeOnlyMainContent, setScrapeOnlyMainContent] = useState(true);
+  const [scrapeMobile, setScrapeMobile] = useState(false);
+  const [scrapeIncludeTags, setScrapeIncludeTags] = useState('');
+  const [scrapeExcludeTags, setScrapeExcludeTags] = useState('');
+  const [scrapeSaveToR2, setScrapeSaveToR2] = useState(true);
+  const [scrapeEnableClean, setScrapeEnableClean] = useState(true);
+  const [isScraping, setIsScraping] = useState(false);
+  const [scrapeResult, setScrapeResult] = useState<{
+    markdown: string;
+    cleanedMarkdown?: string | null;
+    metadata?: Record<string, unknown> | null;
+    charCount: number;
+    cleanedCharCount?: number | null;
+    r2?: { rawKey?: string; cleanedKey?: string | null } | null;
+  } | null>(null);
+  const [scrapeError, setScrapeError] = useState('');
+  const [scrapeShowRaw, setScrapeShowRaw] = useState(true);
 
   // Cloudflare R2 儲存配置
   const [r2AccountId, setR2AccountId] = useState('');
@@ -342,6 +364,70 @@ export default function CrawlDocsFrontend() {
     }
   };
 
+  // Firecrawl Scrape 即時抓取功能
+  const handleScrape = async () => {
+    if (!scrapeTargetUrl.trim()) {
+      setScrapeError('Please provide a URL to scrape.');
+      return;
+    }
+
+    setScrapeError('');
+    setIsScraping(true);
+    setScrapeResult(null);
+
+    try {
+      const res = await fetch('/api/scrape', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: scrapeTargetUrl.trim(),
+          firecrawlKey: firecrawlKey || undefined,
+          waitFor: scrapeWaitFor || undefined,
+          timeout: scrapeTimeout || undefined,
+          onlyMainContent: scrapeOnlyMainContent,
+          mobile: scrapeMobile,
+          includeTags: scrapeIncludeTags.trim() || undefined,
+          excludeTags: scrapeExcludeTags.trim() || undefined,
+          saveToR2: scrapeSaveToR2,
+          enableClean: scrapeEnableClean,
+          // LLM Cleaner 配置（來自 Settings tab）
+          llmApiKey: llmApiKey || undefined,
+          llmBaseUrl: llmBaseUrl || undefined,
+          llmModel: llmModelName || undefined,
+          cleaningPrompt: cleaningPrompt !== DEFAULT_CLEANING_PROMPT ? cleaningPrompt : undefined,
+          // R2 配置（來自 Storage tab）
+          r2AccountId: r2AccountId || undefined,
+          r2AccessKeyId: r2AccessKeyId || undefined,
+          r2SecretAccessKey: r2SecretAccessKey || undefined,
+          r2BucketName: r2BucketName || undefined,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || data.details || 'Scrape request failed');
+      }
+
+      setScrapeResult({
+        markdown: data.markdown,
+        cleanedMarkdown: data.cleanedMarkdown,
+        metadata: data.metadata,
+        charCount: data.charCount,
+        cleanedCharCount: data.cleanedCharCount,
+        r2: data.r2,
+      });
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        setScrapeError(e.message || 'Failed to scrape URL.');
+      } else {
+        setScrapeError('Failed to scrape URL.');
+      }
+    } finally {
+      setIsScraping(false);
+    }
+  };
+
   const calculateProgress = () => {
     if (!taskStatus || taskStatus.total === 0) return 0;
     return Math.round(((taskStatus.completed + taskStatus.failed) / taskStatus.total) * 100);
@@ -382,7 +468,7 @@ export default function CrawlDocsFrontend() {
         <div className="bg-white rounded-[2rem] p-8 custom-shadow stacked-card relative border border-gray-100/50">
           <h1 className="text-3xl font-bold text-gray-900 mb-8 tracking-tight">Create Crawling Task</h1>
           
-          {/* Source Toggle — 三個選項 */}
+          {/* Source Toggle — 四個選項 */}
           <div className="flex bg-[#F1EBE0] p-1 rounded-xl mb-6 relative">
             <button 
               onClick={() => setSourceType('sitemap')}
@@ -395,7 +481,7 @@ export default function CrawlDocsFrontend() {
               onClick={() => setSourceType('manual')}
               className={`flex-1 py-2 text-sm font-medium rounded-lg relative overflow-hidden transition-all ${sourceType === 'manual' ? 'bg-white shadow-sm border border-orange-100/50 text-amber-900' : 'text-gray-500 hover:text-gray-700'}`}
             >
-              <span className="relative z-10">Manual URLs List</span>
+              <span className="relative z-10">Manual URLs</span>
               {sourceType === 'manual' && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-orange-100/30 to-transparent"></div>}
             </button>
             <button 
@@ -404,15 +490,168 @@ export default function CrawlDocsFrontend() {
             >
               <span className="relative z-10 flex items-center justify-center gap-1.5">
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path></svg>
-                Firecrawl Map
+                Map
               </span>
               {sourceType === 'map' && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-orange-100/30 to-transparent"></div>}
+            </button>
+            <button 
+              onClick={() => setSourceType('scrape')}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg relative overflow-hidden transition-all ${sourceType === 'scrape' ? 'bg-white shadow-sm border border-orange-100/50 text-amber-900' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <span className="relative z-10 flex items-center justify-center gap-1.5">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                Scrape
+              </span>
+              {sourceType === 'scrape' && <div className="absolute inset-0 bg-gradient-to-r from-transparent via-orange-100/30 to-transparent"></div>}
             </button>
           </div>
 
           {/* Input Box — 根據模式切換 */}
           <div className="mb-6">
-            {sourceType === 'map' ? (
+            {sourceType === 'scrape' ? (
+              <>
+                {/* Scrape 模式：單一 URL + 進階參數 + Scrape Now 按鈕 */}
+                <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="scrape-url-input">
+                  Target URL
+                </label>
+                <input 
+                  id="scrape-url-input"
+                  value={scrapeTargetUrl}
+                  onChange={(e) => setScrapeTargetUrl(e.target.value)}
+                  className="w-full bg-white border border-[#D5C5B5] rounded-xl px-4 py-2.5 text-sm text-gray-800 focus:ring-amber-500 focus:border-amber-500 shadow-sm outline-none" 
+                  placeholder="https://docs.example.com/getting-started" 
+                  type="text"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Enter a single URL to scrape directly with Firecrawl. Results are returned immediately.
+                </p>
+
+                {/* 進階 Scrape 參數 */}
+                <div className="mt-4 bg-[#F8F5EE] rounded-xl p-4 border border-[#E5D5C5] space-y-3">
+                  <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Advanced Scrape Options</h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Wait For (ms)</label>
+                      <input 
+                        value={scrapeWaitFor}
+                        onChange={(e) => setScrapeWaitFor(e.target.value)}
+                        className="w-full bg-white border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                        placeholder="0"
+                        type="number"
+                        min="0"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Timeout (ms)</label>
+                      <input 
+                        value={scrapeTimeout}
+                        onChange={(e) => setScrapeTimeout(e.target.value)}
+                        className="w-full bg-white border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                        placeholder="30000"
+                        type="number"
+                        min="0"
+                        max="300000"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Include Tags</label>
+                      <input 
+                        value={scrapeIncludeTags}
+                        onChange={(e) => setScrapeIncludeTags(e.target.value)}
+                        className="w-full bg-white border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                        placeholder="h1, p, .main-content"
+                        type="text"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Exclude Tags</label>
+                      <input 
+                        value={scrapeExcludeTags}
+                        onChange={(e) => setScrapeExcludeTags(e.target.value)}
+                        className="w-full bg-white border border-[#E5D5C5] rounded-lg px-3 py-2 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none" 
+                        placeholder="#ad, nav, footer"
+                        type="text"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-6 pt-1">
+                    <label className="flex items-center group cursor-pointer">
+                      <input 
+                        type="checkbox"
+                        checked={scrapeOnlyMainContent}
+                        onChange={(e) => setScrapeOnlyMainContent(e.target.checked)}
+                        className="w-4 h-4 rounded border-[#E5D5C5] text-[#845400] focus:ring-[#845400] transition-colors cursor-pointer accent-[#845400]" 
+                      />
+                      <span className="ml-2 text-sm text-gray-600 group-hover:text-gray-900 transition-colors">Only Main Content</span>
+                    </label>
+                    <label className="flex items-center group cursor-pointer">
+                      <input 
+                        type="checkbox"
+                        checked={scrapeMobile}
+                        onChange={(e) => setScrapeMobile(e.target.checked)}
+                        className="w-4 h-4 rounded border-[#E5D5C5] text-[#845400] focus:ring-[#845400] transition-colors cursor-pointer accent-[#845400]" 
+                      />
+                      <span className="ml-2 text-sm text-gray-600 group-hover:text-gray-900 transition-colors">Mobile Emulation</span>
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap gap-6 border-t border-[#E5D5C5] pt-3">
+                    <label className="flex items-center group cursor-pointer">
+                      <input 
+                        type="checkbox"
+                        checked={scrapeEnableClean}
+                        onChange={(e) => setScrapeEnableClean(e.target.checked)}
+                        className="w-4 h-4 rounded border-[#E5D5C5] text-[#845400] focus:ring-[#845400] transition-colors cursor-pointer accent-[#845400]" 
+                      />
+                      <span className="ml-2 text-sm text-gray-600 group-hover:text-gray-900 transition-colors">LLM Content Cleaner</span>
+                    </label>
+                    <label className="flex items-center group cursor-pointer">
+                      <input 
+                        type="checkbox"
+                        checked={scrapeSaveToR2}
+                        onChange={(e) => setScrapeSaveToR2(e.target.checked)}
+                        className="w-4 h-4 rounded border-[#E5D5C5] text-[#845400] focus:ring-[#845400] transition-colors cursor-pointer accent-[#845400]" 
+                      />
+                      <span className="ml-2 text-sm text-gray-600 group-hover:text-gray-900 transition-colors">Save to R2</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Scrape Now 按鈕 */}
+                <button
+                  onClick={handleScrape}
+                  disabled={isScraping}
+                  className={`w-full mt-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    isScraping 
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
+                      : 'bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-700 hover:to-amber-600 text-white shadow-sm'
+                  }`}
+                >
+                  {isScraping ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Scraping...
+                    </span>
+                  ) : (
+                    <span className="flex items-center justify-center gap-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                      Scrape Now
+                    </span>
+                  )}
+                </button>
+
+                {/* Scrape 錯誤訊息 */}
+                {scrapeError && (
+                  <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
+                    <span className="font-bold">Error:</span> {scrapeError}
+                  </div>
+                )}
+              </>
+            ) : sourceType === 'map' ? (
               <>
                 {/* Map 模式：域名輸入 + 可選選項 + Fetch 按鈕 */}
                 <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="map-url-input">
@@ -524,8 +763,100 @@ export default function CrawlDocsFrontend() {
           </div>
 
 
-          {/* Tracker Board */}
-          <div className="bg-black rounded-2xl overflow-hidden mb-8 relative aspect-video flex flex-col justify-center items-center shadow-inner border border-gray-900 border-opacity-50">
+          {/* Tracker Board / Scrape Result Preview */}
+          {sourceType === 'scrape' ? (
+            /* ===== Scrape 結果預覽面板 ===== */
+            <div className="bg-black rounded-2xl overflow-hidden mb-8 relative flex flex-col shadow-inner border border-gray-900 border-opacity-50" style={{ minHeight: '280px' }}>
+              {!scrapeResult && !isScraping ? (
+                <div className="flex-1 flex items-center justify-center text-center w-full px-8 opacity-60">
+                  <div>
+                    <div className="mx-auto w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mb-4 border border-white/20">
+                      <svg className="w-8 h-8 text-amber-500/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    </div>
+                    <h3 className="text-amber-500/60 font-semibold tracking-widest text-sm uppercase">Scrape Ready</h3>
+                    <p className="text-gray-400 text-xs mt-2 max-w-sm mx-auto">Enter a URL and click &quot;Scrape Now&quot; to instantly fetch and preview the page content.</p>
+                  </div>
+                </div>
+              ) : isScraping ? (
+                <div className="flex-1 flex items-center justify-center">
+                  <div className="text-center">
+                    <svg className="animate-spin w-10 h-10 text-amber-500 mx-auto mb-4" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25"></circle>
+                      <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor" className="opacity-75"></path>
+                    </svg>
+                    <h3 className="text-amber-500 font-semibold text-sm uppercase tracking-widest">Scraping...</h3>
+                    <p className="text-gray-500 text-xs mt-1">{scrapeTargetUrl}</p>
+                  </div>
+                </div>
+              ) : scrapeResult ? (
+                <div className="flex flex-col h-full">
+                  {/* 頂部狀態列 */}
+                  <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800 bg-gray-900/50">
+                    <div className="flex items-center gap-3">
+                      <span className="bg-green-600/20 text-green-400 text-xs px-3 py-1 rounded-full uppercase tracking-wider font-semibold border border-green-600/40">
+                        Success
+                      </span>
+                      {scrapeResult.r2 && (
+                        <span className="bg-blue-600/20 text-blue-400 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider font-semibold border border-blue-600/40">
+                          Saved to R2
+                        </span>
+                      )}
+                    </div>
+                    {/* Raw / Cleaned 切換 */}
+                    {scrapeResult.cleanedMarkdown && (
+                      <div className="flex bg-gray-800 rounded-lg p-0.5 text-[10px]">
+                        <button
+                          onClick={() => setScrapeShowRaw(true)}
+                          className={`px-3 py-1 rounded-md transition-all font-medium ${scrapeShowRaw ? 'bg-amber-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+                        >
+                          Raw
+                        </button>
+                        <button
+                          onClick={() => setScrapeShowRaw(false)}
+                          className={`px-3 py-1 rounded-md transition-all font-medium ${!scrapeShowRaw ? 'bg-amber-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+                        >
+                          Cleaned
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 統計指標列 */}
+                  <div className="grid grid-cols-3 gap-3 px-5 py-3 border-b border-gray-800">
+                    <div className="bg-gray-900/80 rounded-lg p-2.5 border border-gray-800">
+                      <div className="text-gray-500 text-[10px] uppercase font-bold tracking-widest">Raw Chars</div>
+                      <div className="text-gray-200 text-lg font-light mt-0.5">{scrapeResult.charCount.toLocaleString()}</div>
+                    </div>
+                    <div className="bg-gray-900/80 rounded-lg p-2.5 border border-amber-900/30">
+                      <div className="text-amber-500 text-[10px] uppercase font-bold tracking-widest">Cleaned</div>
+                      <div className="text-amber-100 text-lg font-light mt-0.5">{scrapeResult.cleanedCharCount?.toLocaleString() ?? '—'}</div>
+                    </div>
+                    <div className="bg-gray-900/80 rounded-lg p-2.5 border border-gray-800">
+                      <div className="text-gray-500 text-[10px] uppercase font-bold tracking-widest">Status</div>
+                      <div className="text-gray-200 text-lg font-light mt-0.5">{(scrapeResult.metadata as Record<string, unknown>)?.statusCode?.toString() ?? '200'}</div>
+                    </div>
+                  </div>
+
+                  {/* Markdown 內容預覽 */}
+                  <div className="flex-1 overflow-y-auto px-5 py-3 custom-scrollbar" style={{ maxHeight: '300px' }}>
+                    <pre className="text-gray-300 text-xs font-mono whitespace-pre-wrap break-words leading-relaxed">
+                      {scrapeShowRaw ? scrapeResult.markdown : (scrapeResult.cleanedMarkdown || scrapeResult.markdown)}
+                    </pre>
+                  </div>
+
+                  {/* R2 路徑資訊 */}
+                  {scrapeResult.r2 && (
+                    <div className="px-5 py-2.5 border-t border-gray-800 bg-gray-900/30 text-[10px] font-mono text-gray-500 space-y-0.5">
+                      {scrapeResult.r2.rawKey && <div><span className="text-gray-600">RAW:</span> {scrapeResult.r2.rawKey}</div>}
+                      {scrapeResult.r2.cleanedKey && <div><span className="text-gray-600">CLEANED:</span> {scrapeResult.r2.cleanedKey}</div>}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            /* ===== 原始 Queue Tracker Board ===== */
+            <div className="bg-black rounded-2xl overflow-hidden mb-8 relative aspect-video flex flex-col justify-center items-center shadow-inner border border-gray-900 border-opacity-50">
              
              {!taskId ? (
                <div className="text-center w-full px-8 opacity-60">
@@ -621,6 +952,7 @@ export default function CrawlDocsFrontend() {
                 </div>
              )}
           </div>
+          )}
           
           {errorMsg && (
             <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm">
@@ -628,7 +960,9 @@ export default function CrawlDocsFrontend() {
             </div>
           )}
 
-          {/* Advanced Settings */}
+          {/* Advanced Settings — 僅在非 scrape 模式下顯示 */}
+          {sourceType !== 'scrape' && (
+          <>
           <div className="bg-[#F8F5EE] rounded-2xl p-6 border border-[#E5D5C5]">
             <div className="flex justify-between items-center mb-6 cursor-pointer">
               <h2 className="text-lg font-semibold text-gray-800">Advanced Engine Settings</h2>
@@ -749,6 +1083,8 @@ export default function CrawlDocsFrontend() {
           >
             {isSubmitting ? 'Starting Engine...' : 'Initialize Crawl'}
           </button>
+          </>
+          )}
         </div>
         )}
 

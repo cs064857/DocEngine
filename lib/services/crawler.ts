@@ -51,3 +51,58 @@ export async function scrapeUrl(url: string, overrides?: CrawlerOverrides): Prom
 
   return scrapeResult.markdown || '';
 }
+
+// Firecrawl Scrape 進階參數介面
+export interface ScrapeAdvancedOptions {
+  waitFor?: number;
+  timeout?: number;
+  onlyMainContent?: boolean;
+  mobile?: boolean;
+  includeTags?: string[];
+  excludeTags?: string[];
+}
+
+// Scrape 進階結果
+export interface ScrapeAdvancedResult {
+  markdown: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * 使用完整 Firecrawl Scrape API 參數進行進階單頁抓取
+ */
+export async function scrapeUrlAdvanced(
+  url: string,
+  options?: ScrapeAdvancedOptions,
+  overrides?: CrawlerOverrides
+): Promise<ScrapeAdvancedResult> {
+  console.log(`[Crawler] Advanced scraping URL: ${url}`, options);
+
+  const firecrawl = getFirecrawl(overrides);
+
+  // 組裝 Firecrawl scrapeUrl 參數
+  const scrapeParams: Record<string, unknown> = {
+    formats: ['markdown'],
+  };
+
+  if (options?.waitFor !== undefined) scrapeParams.waitFor = options.waitFor;
+  if (options?.timeout !== undefined) scrapeParams.timeout = options.timeout;
+  if (options?.onlyMainContent !== undefined) scrapeParams.onlyMainContent = options.onlyMainContent;
+  if (options?.mobile !== undefined) scrapeParams.mobile = options.mobile;
+  if (options?.includeTags && options.includeTags.length > 0) scrapeParams.includeTags = options.includeTags;
+  if (options?.excludeTags && options.excludeTags.length > 0) scrapeParams.excludeTags = options.excludeTags;
+
+  const scrapeResult = await firecrawl.scrapeUrl(url, scrapeParams);
+
+  if (!scrapeResult.success) {
+    if (scrapeResult.error) {
+      throw new Error(`Scrape failed: ${scrapeResult.error}`);
+    }
+    throw new Error('Scrape failed with unknown error');
+  }
+
+  return {
+    markdown: scrapeResult.markdown || '',
+    metadata: scrapeResult.metadata as Record<string, unknown> | undefined,
+  };
+}
