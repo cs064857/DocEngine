@@ -21,19 +21,32 @@ If no valid URLs are found, output {"urls": []}. Do not output any markdown form
  * @param overrides - 可選 LLM 覆蓋配置（apiKey, baseUrl, model, prompt）
  */
 export async function extractUrls(input: string, overrides?: UrlExtractorOverrides): Promise<string[]> {
-  const isUrl = /^(https?:\/\/[^\s]+)/.test(input.trim());
+  const trimmed = input.trim();
 
-  if (isUrl) {
-    const url = input.trim();
-    if (url.endsWith('.xml') || url.includes('sitemap')) {
-      return extractFromSitemap(url);
-    } else {
-      // 單一頁面 URL，非 sitemap
+  // 先嘗試按換行或逗號分割
+  const lines = trimmed
+    .split(/[\n,]+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  // 判斷是否每一行都是合法 URL
+  const urlPattern = /^https?:\/\/[^\s]+$/;
+  const allAreUrls = lines.length > 0 && lines.every(line => urlPattern.test(line));
+
+  if (allAreUrls) {
+    if (lines.length === 1) {
+      const url = lines[0];
+      // 單一 URL：若為 sitemap 則展開，否則直接回傳
+      if (url.endsWith('.xml') || url.includes('sitemap')) {
+        return extractFromSitemap(url);
+      }
       return [url];
     }
+    // 多行 URL 清單：直接去重回傳
+    return [...new Set(lines)];
   }
 
-  // 嘗試透過 LLM 從文字中提取 URL
+  // 非 URL 格式 → 嘗試透過 LLM 從文字中提取 URL
   return extractFromText(input, overrides);
 }
 
@@ -42,20 +55,20 @@ export async function extractUrls(input: string, overrides?: UrlExtractorOverrid
  */
 async function extractFromSitemap(sitemapUrl: string): Promise<string[]> {
   console.log(`[URL Extractor] Fetching sitemap: ${sitemapUrl}`);
-  
+
   const response = await fetch(sitemapUrl);
   if (!response.ok) {
     throw new Error(`Failed to fetch sitemap: HTTP ${response.status}`);
   }
 
   const xmlData = await response.text();
-  
+
   const parser = new XMLParser({
     ignoreAttributes: false,
     parseAttributeValue: false,
     textNodeName: 'text',
   });
-  
+
   const jsonObj = parser.parse(xmlData);
   const urls: string[] = [];
 
@@ -70,10 +83,10 @@ async function extractFromSitemap(sitemapUrl: string): Promise<string[]> {
   }
   // Handle sitemapindex
   else if (jsonObj.sitemapindex && jsonObj.sitemapindex.sitemap) {
-    const sitemapEntries = Array.isArray(jsonObj.sitemapindex.sitemap) 
-      ? jsonObj.sitemapindex.sitemap 
+    const sitemapEntries = Array.isArray(jsonObj.sitemapindex.sitemap)
+      ? jsonObj.sitemapindex.sitemap
       : [jsonObj.sitemapindex.sitemap];
-      
+
     // Notice: For a complete solution we might iteratively fetch these child sitemaps,
     // but the python codebase simply extracted them or expected simple sitemaps right away.
     // For recursive fetching, we would add the recursion here.
