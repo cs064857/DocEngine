@@ -143,6 +143,8 @@ export default function CrawlDocsFrontend() {
   const [abortingUrls, setAbortingUrls] = useState<Set<string>>(new Set());
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const [fileSizes, setFileSizes] = useState<Record<string, number>>({});
+  const [isLocalActionLoading, setIsLocalActionLoading] = useState<Set<string>>(new Set());
 
   // History tasks state
   const [tasksList, setTasksList] = useState<JobTask[]>([]);
@@ -647,35 +649,54 @@ export default function CrawlDocsFrontend() {
     });
   };
 
-  // === 檔案下載處理函式 ===
-  const handleDownloadSingle = async (url: string) => {
+  const fetchFileSizes = async () => {
     if (!taskStatus?.date) return;
-
-    const r2Config = { r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName };
+    const firstSuccessUrl = taskStatus.urls?.find(u => u.status === 'success')?.url;
+    if (!firstSuccessUrl) return;
 
     try {
-      // 嘗試優先下載 cleaned，若失敗（或未啟用）對應不到則嘗試下載 raw
-      const preferredSubdir = enableClean ? 'cleaned' : 'raw';
-      const key = buildR2Key(url, preferredSubdir, taskStatus.date);
-      await downloadSingleFile(key, r2Config);
-    } catch (e: any) {
-      console.warn('First download failed, trying fallback...', e);
-      // Fallback
-      if (!enableClean) {
-        markKeysAsFailed([{ key: buildR2Key(url, 'raw', taskStatus.date), reason: e.message || 'File is empty or not found' }]);
-        return;
+      const domain = new URL(firstSuccessUrl).hostname;
+      const fetchOpts = {
+        method: r2AccountId ? 'POST' : 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        body: r2AccountId ? JSON.stringify({ r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName }) : undefined
+      };
+
+      const rawRes = await fetch(`/api/files?prefix=${encodeURIComponent(`raw/${taskStatus.date}/${domain}/`)}&limit=1000`, fetchOpts);
+      const clnRes = await fetch(`/api/files?prefix=${encodeURIComponent(`cleaned/${taskStatus.date}/${domain}/`)}&limit=1000`, fetchOpts);
+
+      const sizes: Record<string, number> = {};
+
+      if (rawRes.ok) {
+        const { files } = await rawRes.json();
+        for (const file of files || []) sizes[file.key] = file.size;
       }
-      try {
-        const fallbackKey = buildR2Key(url, 'raw', taskStatus.date);
-        await downloadSingleFile(fallbackKey, r2Config);
-      } catch (err: any) {
-        console.error('Download single failed:', err);
-        markKeysAsFailed([{ key: buildR2Key(url, 'raw', taskStatus.date), reason: err.message || 'File is empty or not found' }]);
+      if (clnRes.ok) {
+        const { files } = await clnRes.json();
+        for (const file of files || []) sizes[file.key] = file.size;
       }
+
+      setFileSizes(prev => ({ ...prev, ...sizes }));
+    } catch (e) {
+      console.error('Failed to fetch file sizes', e);
     }
   };
 
-  const handleDownloadAll = async () => {
+  // === 檔案下載處理函式 ===
+  const handleDownloadSingle = async (url: string, type: 'raw' | 'cleaned') => {
+    if (!taskStatus?.date) return;
+    const r2Config = { r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName };
+    try {
+      const key = buildR2Key(url, type, taskStatus.date);
+      await downloadSingleFile(key, r2Config);
+    } catch (e: any) {
+      console.error(`Download ${type} single failed:`, e);
+      markKeysAsFailed([{ key: buildR2Key(url, type, taskStatus.date), reason: e.message || 'File is empty or not found' }]);
+      alert(`下載失敗: ${e.message || '檔案為空或無法存取'}`);
+    }
+  };
+
+  const handleDownloadAll = async (type: 'raw' | 'cleaned') => {
     if (!taskStatus?.date) return;
     const firstSuccessUrl = taskStatus.urls?.find(u => u.status === 'success')?.url;
     if (!firstSuccessUrl) {
@@ -689,12 +710,11 @@ export default function CrawlDocsFrontend() {
     try {
       const parsed = new URL(firstSuccessUrl);
       const domain = parsed.hostname;
-      const subdir = enableClean ? 'cleaned' : 'raw';
-      const prefix = `${subdir}/${taskStatus.date}/${domain}/`;
+      const prefix = `${type}/${taskStatus.date}/${domain}/`;
 
       const r2Config = { r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName };
 
-      const { failedKeys } = await downloadFolderAsZip(prefix, `Task-${taskId}-${domain}`, r2Config, (pct: number) => {
+      const { failedKeys } = await downloadFolderAsZip(prefix, `Task-${taskId}-${domain}-${type}`, r2Config, (pct: number) => {
         setDownloadProgress(pct);
       });
 
@@ -705,11 +725,34 @@ export default function CrawlDocsFrontend() {
         }, 300);
       }
     } catch (e: any) {
-      console.error('Download All failed:', e);
+      console.error(`Download All ${type} failed:`, e);
       alert('批次下載發生錯誤，請稍後再試。\n' + (e.message || ''));
     } finally {
       setIsDownloading(false);
-      setTimeout(() => setDownloadProgress(0), 1500); // 延遲清空讓使用者看到 100%
+      setTimeout(() => setDownloadProgress(0), 1500);
+    }
+  };
+
+  const handleCleanSingle = async (url: string) => {
+    if (!taskStatus?.date) return;
+
+    setIsLocalActionLoading(prev => { const n = new Set(prev); n.add(url); return n; });
+    try {
+      const engineSettings = { llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt };
+      const r2Overrides = { r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName };
+      const res = await fetch('/api/clean', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, date: taskStatus.date, engineSettings, r2Overrides })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to clean');
+      alert(`LLM 清洗完成！結果大小: ${data.size} bytes`);
+      fetchFileSizes();
+    } catch (e: any) {
+      alert('清洗服務發生錯誤: ' + (e.message || 'Unknown network error.'));
+    } finally {
+      setIsLocalActionLoading(prev => { const n = new Set(prev); n.delete(url); return n; });
     }
   };
 
@@ -1786,22 +1829,50 @@ export default function CrawlDocsFrontend() {
                   </button>
                 )}
                 {taskStatus?.urls?.some(u => u.status === 'success') && (
-                  <button
-                    onClick={handleDownloadAll}
-                    disabled={isDownloading}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-lg text-xs font-medium hover:bg-indigo-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Download All Success Files as ZIP"
-                  >
-                    {isDownloading ? (
-                      <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
-                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25"></circle>
-                        <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor" className="opacity-75"></path>
+                  <>
+                    <button
+                      onClick={() => fetchFileSizes()}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-gray-200 text-gray-700 rounded-lg text-xs font-medium hover:bg-gray-100 transition-all"
+                      title="Refresh File Sizes"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                       </svg>
-                    ) : (
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                    )}
-                    {isDownloading ? `${Math.round(downloadProgress)}%` : 'Download ZIP'}
-                  </button>
+                      Refresh Sizes
+                    </button>
+                    <button
+                      onClick={() => handleDownloadAll('raw')}
+                      disabled={isDownloading}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-50 border border-stone-200 text-stone-700 rounded-lg text-xs font-medium hover:bg-stone-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Download All Raw Files as ZIP"
+                    >
+                      {isDownloading ? (
+                        <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+                          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25"></circle>
+                          <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor" className="opacity-75"></path>
+                        </svg>
+                      ) : (
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                      )}
+                      {isDownloading ? `${Math.round(downloadProgress)}%` : 'Raw ZIP'}
+                    </button>
+                    <button
+                      onClick={() => handleDownloadAll('cleaned')}
+                      disabled={isDownloading}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-lg text-xs font-medium hover:bg-indigo-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Download All Cleaned Files as ZIP"
+                    >
+                      {isDownloading ? (
+                        <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+                          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25"></circle>
+                          <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor" className="opacity-75"></path>
+                        </svg>
+                      ) : (
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                      )}
+                      {isDownloading ? `${Math.round(downloadProgress)}%` : 'Cleaned ZIP'}
+                    </button>
+                  </>
                 )}
                 <button
                   onClick={() => setDrawerOpen(false)}
@@ -1868,11 +1939,18 @@ export default function CrawlDocsFrontend() {
                           <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12"></path></svg>
                         )}
                       </div>
-                      {/* URL 與錯誤訊息 */}
+                      {/* URL 與錯誤訊息與尺寸 */}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm text-gray-800 break-all font-mono leading-relaxed">{item.url}</p>
                         {item.status === 'failed' && item.error && (
-                          <p className="text-[10px] text-red-400 break-all mt-0.5">{item.error}</p>
+                          <p className="text-[10px] text-red-500 break-all mt-0.5">{item.error}</p>
+                        )}
+                        {item.status === 'success' && taskStatus.date && (
+                          <p className="text-[10px] text-gray-400 font-mono mt-0.5 tracking-tight flex items-center gap-2">
+                            <span>Raw: {fileSizes[buildR2Key(item.url, 'raw', taskStatus.date)] !== undefined ? `${(fileSizes[buildR2Key(item.url, 'raw', taskStatus.date)] / 1024).toFixed(1)} KB` : 'N/A'}</span>
+                            <span className="text-gray-300">|</span>
+                            <span>Cleaned: {fileSizes[buildR2Key(item.url, 'cleaned', taskStatus.date)] !== undefined ? `${(fileSizes[buildR2Key(item.url, 'cleaned', taskStatus.date)] / 1024).toFixed(1)} KB` : 'N/A'}</span>
+                          </p>
                         )}
                       </div>
                       {/* 狀態標籤 */}
@@ -1919,15 +1997,33 @@ export default function CrawlDocsFrontend() {
                           )}
                         </button>
                       )}
-                      {/* 單筆下載按鈕 */}
+                      {/* 單筆資料操作：Cleaned, Raw 獨立按鈕與 LLM Clean */}
                       {item.status === 'success' && (
-                        <button
-                          onClick={() => handleDownloadSingle(item.url)}
-                          className="flex-shrink-0 p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-                          title="Download this file"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleCleanSingle(item.url)}
+                            disabled={isLocalActionLoading.has(item.url)}
+                            className="flex-shrink-0 text-[10px] font-medium px-2 py-1 text-purple-600 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-md transition-all disabled:opacity-50"
+                            title="Force LLM Clean on this raw file"
+                          >
+                            {isLocalActionLoading.has(item.url) ? '...' : '✨ Clean'}
+                          </button>
+                          <div className="h-4 w-px bg-gray-200 mx-0.5"></div>
+                          <button
+                            onClick={() => handleDownloadSingle(item.url, 'raw')}
+                            className="flex-shrink-0 text-[10px] font-medium px-2 py-1 text-stone-600 bg-stone-50 hover:bg-stone-100 border border-stone-200 rounded-md transition-all"
+                            title="Download Raw MD"
+                          >
+                            Raw
+                          </button>
+                          <button
+                            onClick={() => handleDownloadSingle(item.url, 'cleaned')}
+                            className="flex-shrink-0 text-[10px] font-medium px-2 py-1 text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-md transition-all"
+                            title="Download Cleaned MD"
+                          >
+                            Cleaned
+                          </button>
+                        </div>
                       )}
                     </li>
                   ))}
