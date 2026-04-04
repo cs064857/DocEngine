@@ -1,6 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { checkCrawlJob, startCrawlJob } from '@/lib/services/crawler';
+import { downloadSingleFile, downloadFolderAsZip } from '@/lib/utils/download';
+import { buildR2Key } from '@/lib/utils/helpers';
 
 // Defines the shape of standard Crawl Task metrics
 interface JobTask {
@@ -136,6 +139,8 @@ export default function CrawlDocsFrontend() {
   // Task Progress Drawer 狀態
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [retryingUrls, setRetryingUrls] = useState<Set<string>>(new Set());
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
 
   // History tasks state
   const [tasksList, setTasksList] = useState<JobTask[]>([]);
@@ -593,6 +598,63 @@ export default function CrawlDocsFrontend() {
       setRetryingUrls(new Set());
     }
   }, [taskId, taskStatus, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
+
+  // === 檔案下載處理函式 ===
+  const handleDownloadSingle = async (url: string) => {
+    if (!taskStatus?.date) return;
+    try {
+      // 嘗試優先下載 cleaned，若失敗（或未啟用）對應不到則嘗試下載 raw
+      // 若已知確定的狀態，這裡用 try-catch 嘗試兩種 prefix 是最安全的做法
+      const preferredSubdir = enableClean ? 'cleaned' : 'raw';
+      const key = buildR2Key(url, preferredSubdir, taskStatus.date);
+      await downloadSingleFile(key);
+    } catch (e) {
+      console.warn('First download failed, trying fallback...', e);
+      // Fallback
+      if (!enableClean) return; // 如果本來就是 raw 失敗就不再試了
+      try {
+        const fallbackKey = buildR2Key(url, 'raw', taskStatus.date);
+        await downloadSingleFile(fallbackKey);
+      } catch (err) {
+        console.error('Download single failed:', err);
+        alert('檔案可能尚未就緒或發生錯誤。');
+      }
+    }
+  };
+
+  const handleDownloadAll = async () => {
+    if (!taskStatus?.date) return;
+    // 使用任務日期作為根目錄來下載該日的資料
+    // 但因為同一個日期下可能有多個網域/任務，更精確的做法是：
+    // 若該任務所有的 URL 都屬於同樣的 Domain，可以鎖定特定的 domain prefix。
+    // 在這裡我們先找出第一筆成功 URL 的 domain 作為 prefix 的核心
+    const firstSuccessUrl = taskStatus.urls?.find(u => u.status === 'success')?.url;
+    if (!firstSuccessUrl) {
+      alert('無成功解析的檔案可供下載。');
+      return;
+    }
+
+    setIsDownloading(true);
+    setDownloadProgress(0);
+
+    try {
+      const parsed = new URL(firstSuccessUrl);
+      const domain = parsed.hostname;
+      const subdir = enableClean ? 'cleaned' : 'raw';
+      // 下載整個對應任務特定 Domain 與日期的資料夾
+      const prefix = `${subdir}/${taskStatus.date}/${domain}/`;
+
+      await downloadFolderAsZip(prefix, `Task-${taskId}-${domain}`, (pct: number) => {
+        setDownloadProgress(pct);
+      });
+    } catch (e) {
+      console.error('Download All failed:', e);
+      alert('批次下載發生錯誤，請稍後再試。');
+    } finally {
+      setIsDownloading(false);
+      setTimeout(() => setDownloadProgress(0), 1500); // 延遲清空讓使用者看到 100%
+    }
+  };
 
   return (
     <div className="text-gray-800 antialiased min-h-screen pb-16">
@@ -1654,6 +1716,24 @@ export default function CrawlDocsFrontend() {
                     Retry All Failed
                   </button>
                 )}
+                {taskStatus?.urls?.some(u => u.status === 'success') && (
+                  <button
+                    onClick={handleDownloadAll}
+                    disabled={isDownloading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-lg text-xs font-medium hover:bg-indigo-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Download All Success Files as ZIP"
+                  >
+                    {isDownloading ? (
+                      <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25"></circle>
+                        <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor" className="opacity-75"></path>
+                      </svg>
+                    ) : (
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    )}
+                    {isDownloading ? `${Math.round(downloadProgress)}%` : 'Download ZIP'}
+                  </button>
+                )}
                 <button
                   onClick={() => setDrawerOpen(false)}
                   className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-all"
@@ -1750,6 +1830,16 @@ export default function CrawlDocsFrontend() {
                           ) : (
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                           )}
+                        </button>
+                      )}
+                      {/* 單筆下載按鈕 */}
+                      {item.status === 'success' && (
+                        <button
+                          onClick={() => handleDownloadSingle(item.url)}
+                          className="flex-shrink-0 p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                          title="Download this file"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                         </button>
                       )}
                     </li>

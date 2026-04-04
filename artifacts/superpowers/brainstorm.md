@@ -1,47 +1,59 @@
 # Superpowers Brainstorm
 
 ## Goal
-重構及整合 CrawlDocs-web 的任務來源模式介面，將抓取模式精簡統一為三大主要動線：「Scrape」、「Crawl」、「Map」，並改善不同模式之間的工作流銜接與轉換邏輯，提升用戶體驗。
+
+為 CrawlDocs 前端介面（Files Tab 或 Tracker Board）提供下載功能。讓使用者可以單擊下載單一檔案（Markdown 等）或是將整個目錄（例如一整個 Task 的爬取結果或特定網域層級）打包成 ZIP 壓縮檔一併下載。
 
 ## Constraints
-1. 需相容已開發好的 Vercel Queue 與後處理機制（LLM Content Cleaner + Save to R2）。
-2. `Scrape` 與 `Crawl` 模式都必須共享能處理單一網址、網址清單（Manual）、或網站地圖 (Sitemap) 的輸入介面。
-3. 整合後，`Map` 探索出來的網址結果，必須能在畫面上具備動線移轉，可選擇將結果交由 `Scrape` 或是 `Crawl` 進行操作。
-4. 用戶明確指示「Crawl」的定義是「對接 Firecrawl 的 Crawl API 後再進行後續處理 (Vercel Queue → 逐一 Scrape → 存 R2)」。這需要在 API 的運用（獲取列表還是獲取內容）上進行設計轉換，避免不必要的雙重消耗。
+
+- **瀏覽器端資源限制**：若於前端將大量檔案打包為 ZIP（例如透過 JSZip），會消耗大量記憶體與 CPU 效能，因此如果目錄過大可能無法純前端處理。
+- **R2 API 架構**：目前 R2 API (`/api/files`) 只能逐一下載單筆檔案內容，並沒有原生提供「打包整個目錄/Prefix 將其做成 ZIP」的 API 端點。
+- **依賴管理**：可能需要額外引入 ZIP 套件（如 `jszip` 或 `archiver`）至前端或後端。
+- **檔案大小與傳輸**：ZIP 處理可能會因為 Vercel Serverless Function 的 Timeout（通常 10秒或最大 60秒）或 Payload 大小限制（通常 4.5MB 計算）導致中斷。
 
 ## Known context
-1. 目前有 `/api/crawl` （處理 Sitemap / Manual 並送進 Queue 等待 /api/queues/process-url 逐一呼叫 Scrape ），還有一個新的快速 `/api/scrape` 用於即時測試。
-2. Firecrawl 原生的 `Crawl API` 是非同步運行的自動爬蟲系統，預設會爬取所有子頁面的「內容」；若只要找出 URL 後再跑流程，其概念跟 Map API 有所重疊，但在 Firecrawl v2 架構下，Crawl API 通常也能針對深層網頁探索並利用 polling 去獲得最後結果。
-3. 先前的 `Map` 模式（`/api/map`）有在 UI 上回傳單純的網址字串清單。
-4. 目前追蹤進度的 Tracker Board 有完整支援 Queue 任務的概念。
+
+- 目標 R2 儲存桶以 Prefix 作為偽目錄（例如 `raw/2026MMDD/domain.com/path/...`）。
+- 前端有 `/api/files?key=...` 取得單一檔案，以及 `/api/files?prefix=...` 取得檔案清單的功能。
+- 目前架構是部署在 Vercel 上的 Next.js 14/15 應用程式。
 
 ## Risks
-1. **API 概念與資源浪費**：如果呼叫 Firecrawl `Crawl API` 去爬整個網站，Firecrawl 其實已經幫你爬完內容。如果我們只拿裡面吐出來的 links 清單，然後「再」把它丟入我們的 Vercel Queue 跑我們自己的「逐一 Scrape」，等於針對同一個網站消耗兩次 Firecrawl Credits。這在實作時必須跟技術規格釐清（例如 Crawl 時強制設定 `formats: ["links"]` 以節省時間與花費）。
-2. **Scrape 單頁 vs 批次 概念混淆**：今天剛剛完成的「即時 Scrape 模式」是不進 Queue 直接取回畫面的；如果把 Sitemap 也丟進 Scrape 模式，在 UI 上必須整合出「單筆即時預覽」還是「送入大量佇列處理」的差別，否則體驗會斷層。
-3. **Map 後端行為狀態複雜化**：從 Map 拿到資料後，前端元件狀態要如何無縫傳遞給新的 Scrape / Crawl form，可能需要共享狀態或是透過事件將大量網址注入。
+
+- **Lambda Timeout / Memory Limit**：若交由 Next.js 後端 API 打包 ZIP，當檔案總大小超過好幾 MB 甚至上百 MB 時，極可能觸發 Serverless function 的逾時或記憶體溢位。
+- **Frontend Memory Leak**：若在前端透過 `jszip` Fetch 幾百個檔案再打包，可能會讓使用者的瀏覽器崩潰卡死（瀏覽器的 Blob/ArrayBuffer 上限）。
+- **CORS / 安全性**：確保只允許下載合法目錄內的內容，防止 Path Traversal 攻擊。
 
 ## Options (2–4)
-- **Option A (純粹將所有探索結果導入現存的 Queue)**
-  - UI 剩下 `Map`、`Scrape`、`Crawl`。
-  - `Scrape`：輸入已知名單 (Sitemap/List/單筆) → （若是多筆就進 Queue，若是單筆可即時）。
-  - `Crawl`：輸入單一 URL/Sitemap/List → 呼叫 Firecrawl 的 `/v2/crawl`（設定為只爬 `links`），輪詢結束後，取得探索到的 URL 清單，自動轉發至 Queue 中執行「逐一 Scrape → R2」。
-  - `Map`：輸入 URL → 拿到網域下名單，顯示清單給用戶選擇後，按鈕點擊 "Send to Scrape" 或 "Send to Crawl" (其實這兩者在此選項下最終都會進 Queue 跑 Scrape)。
-- **Option B (讓 Crawl 保留 Firecrawl 的原生爬取與 Webhook 優勢)**
-  - 取代我們的 Vercel Queue，當用戶選 `Crawl` 時，我們直接呼叫 Firecrawl 的 Crawl API 要求它爬內容，並接收它的完整內容然後再處理（雖然可能與用戶「要進 Queue 逐一處理」的要求相左）。
-- **Option C (根據明確的用戶動線進行前端重構)**
-  - **按鈕：** 分為 `Scrape` 跟 `Crawl`，以及單純的 `Map` 工具。
-  - `Scrape` 作為「點對點執行」的代名詞，不管是給 Sitemap 或 網址清單，都不會往外擴張，你給 10 個網址它就爬這 10 個。
-  - `Crawl` 作為「散發探索執行」的代名詞，針對你給的起點（或者 Sitemap/網址清單內的每個點），讓它擴展並自己尋找所有子連結再放入我們的 Queue。
-  - 在 `Map` 的結果區塊增加一排行動按鈕：「[🗂️ Use in Scrape] (精準抓取這些已知的連結)」 或 「[🕷️ Use in Crawl] (以此列表為起點重新向外發散探索)」。
+
+**Option A: 純前端 JSZip 打包**
+
+- **做法**：當點選下載資料夾時，前端根據 Prefix 呼叫 `/api/files` 取得該目錄下所有檔案清單。接著透過 JSZip，前端 `Promise.all`（或批次）逐一下載每個檔案內容加到 Zip 中，最後產生一個 Blob 觸發下載。
+- **優點**：不消耗後端 Serverless Function 運算資源，也沒有 Backend Timeout（10s）的限制。
+- **缺點**：如果一個爬取任務有 1,000 個檔案，前端發起 1,000 個 Request，網路阻塞與記憶體消耗較大，可能導致瀏覽器當機。
+
+**Option B: 後端 Stream ZIP 打包 (Vercel Serverless)**
+
+- **做法**：新增 `/api/download-zip?prefix=...` Endpoint。後端使用 `archiver` 套件，一邊從 R2 Fetch 檔案流，一邊壓縮成 zip 透過 HTTP Stream 寫給前端 (ReadableStream -> NextResponse)。
+- **優點**：對前端瀏覽器友善，只需發起一次請求，體驗較好。避免前端發生幾百次 HTTP Requests 造成的連線池耗盡。
+- **缺點**：受限於 Vercel Serverless Function Timeout（預設 10秒，Pro 方案 15-60秒）。如果 R2 當中的檔案太大、太多，仍會在處理一半被 Vercel 強制切斷。
+
+**Option C: 佇列異步打包 (Vercel Queue + R2)**
+
+- **做法**：請求打包目錄時，派發一個打包任務到 Vercel Queue。Worker 在背景將所有檔案彙整壓縮為一個 `task-foo.zip` 存回 R2，完成後前端收到通知，給予一個直接下載該 ZIP 的連結。
+- **優點**：架構最穩健，完全無避開 Timeout 問題，能應付上萬個檔案與 GB 級容量。
+- **缺點**：實作複雜度最高，需設計狀態輪詢與新的 Queue 流程。對即時性有影響（無法隨點隨下載，需等待數十秒甚至更久）。
 
 ## Recommendation
-選擇 **Option C 架構** 作為前端規劃，以釐清三者目的：
-1. **Scrape (已知數量執行)**：承接手動輸入網址與 Sitemap。由於目標明確不發散，送出後若是批量即入 Queue，單筆則直接呈現。
-2. **Crawl (未知數量蔓延)**：承接手動輸入網址與 Sitemap，作為 "Entry point"，呼叫 Firecrawl 發出爬蟲任務，並在我們這端寫一個 Worker/Route 定期獲取 Crawl 到哪些 URL，並將這些新發現的 URL 推入 Vercel Queue。
-3. **Map (探索與分流)**：純探索。結果出來後，放置兩個切換按鈕，點擊後會直接把文字串轉入 `Scrape` 或 `Crawl` 的文字框並自動切換分頁，實現動線完美連接。
+
+考量目前 CrawlDocs 主要是抓取文本（Markdown），通常檔案體積每份只有幾 KB，單個站點幾百頁總合通常也不會超過 10~20 MB。
+我們推薦採用 **Option A (前端 JSZip) 與 Option B (後端 Stream) 的混合或擇一**：
+首選 **Option A** (搭配 batch size / concurrency control)，因為可以徹底避開 Vercel Timeout 且實作相對輕量；利用類似 `jszip` 加上 `file-saver`，並控制前端併發數在 5-10 之間分批抓取並放入 Zip Blob，這在大部分普通大小的 Crawl 任務中（100-500頁）體驗最佳且不需改動任何現有後端架構。
+如果是單筆檔案，前端則直接根據 key 生成 `Blob` 或 `a[download]` 進行觸發即可。
 
 ## Acceptance criteria
-1. 原先 Create Tab 的四顆按鈕整併或重構成有 `Map`, `Crawl`, `Scrape`。
-2. `Scrape` 的表單能適配單個 URL（立刻抓）、多個 URL 或 Sitemap (送入 Queue 跑現有 `/api/crawl` 邏輯)。
-3. 實作 `/api/crawl` (Crawl API mode) 或在原來基礎上讓它呼叫 Firecrawl Crawl，收集到網址清單後再放入 Queue。
-4. 在發送 `Map` 並拿到網域陣列後，UI 會展示出 URL 清單，且具備 `Send to Scrape` 及 `Send to Crawl` 兩個顯眼操作。
+
+- 使用者可在 UI 上（例如 Files 列表或 Task Explorer 旁）看見「下載」或「下載全部為 ZIP」等操作按鈕。
+- 若目標是單一 `.md` 檔案，點擊按鈕直接觸發瀏覽器下載單一文件（檔名對應設定）。
+- 若目標是資料夾（Prefix），點擊後系統會讀取該 Prefix 下的所有檔案，封裝成一個 ZIP 並自動觸發下載。
+- 壓縮檔內部需維持合理的目錄結構或直接展開為扁平列表（視實作而定，建議保留內部斜線結構）。
+- 打包時 UI 應有 Loading 或進度提示，避免大資料夾使用者以為卡住。
