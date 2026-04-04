@@ -633,19 +633,22 @@ export default function CrawlDocsFrontend() {
   // === 檔案下載處理函式 ===
   const handleDownloadSingle = async (url: string) => {
     if (!taskStatus?.date) return;
+
+    const r2Config = { r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName };
+
     try {
       // 嘗試優先下載 cleaned，若失敗（或未啟用）對應不到則嘗試下載 raw
       // 若已知確定的狀態，這裡用 try-catch 嘗試兩種 prefix 是最安全的做法
       const preferredSubdir = enableClean ? 'cleaned' : 'raw';
       const key = buildR2Key(url, preferredSubdir, taskStatus.date);
-      await downloadSingleFile(key);
+      await downloadSingleFile(key, r2Config);
     } catch (e) {
       console.warn('First download failed, trying fallback...', e);
       // Fallback
       if (!enableClean) return; // 如果本來就是 raw 失敗就不再試了
       try {
         const fallbackKey = buildR2Key(url, 'raw', taskStatus.date);
-        await downloadSingleFile(fallbackKey);
+        await downloadSingleFile(fallbackKey, r2Config);
       } catch (err) {
         console.error('Download single failed:', err);
         alert('檔案可能尚未就緒或發生錯誤。');
@@ -675,7 +678,9 @@ export default function CrawlDocsFrontend() {
       // 下載整個對應任務特定 Domain 與日期的資料夾
       const prefix = `${subdir}/${taskStatus.date}/${domain}/`;
 
-      await downloadFolderAsZip(prefix, `Task-${taskId}-${domain}`, (pct: number) => {
+      const r2Config = { r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName };
+
+      await downloadFolderAsZip(prefix, `Task-${taskId}-${domain}`, r2Config, (pct: number) => {
         setDownloadProgress(pct);
       });
     } catch (e) {

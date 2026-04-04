@@ -1,12 +1,23 @@
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 
+export interface R2Config {
+    r2AccountId?: string;
+    r2AccessKeyId?: string;
+    r2SecretAccessKey?: string;
+    r2BucketName?: string;
+}
+
 /**
  * 下載單一檔案
  */
-export async function downloadSingleFile(key: string, filename?: string) {
+export async function downloadSingleFile(key: string, r2Config?: R2Config, filename?: string) {
     try {
-        const res = await fetch(`/api/files?key=${encodeURIComponent(key)}`);
+        const res = await fetch(`/api/files?key=${encodeURIComponent(key)}`, {
+            method: r2Config && Object.keys(r2Config).length > 0 ? 'POST' : 'GET',
+            headers: { 'Content-Type': 'application/json' },
+            body: r2Config && Object.keys(r2Config).length > 0 ? JSON.stringify(r2Config) : undefined
+        });
         if (!res.ok) throw new Error('Failed to download file');
 
         const blob = await res.blob();
@@ -24,19 +35,27 @@ export async function downloadSingleFile(key: string, filename?: string) {
  * 批次下載資料夾，並壓縮為 ZIP
  * @param prefix 資料夾路徑
  * @param zipName 輸出的 ZIP 檔名
+ * @param r2Config R2 Credential Overrides 
  * @param onProgress 進度回報 (百分比 0~100)
  */
 export async function downloadFolderAsZip(
     prefix: string,
     zipName: string,
+    r2Config?: R2Config,
     onProgress?: (percent: number) => void
 ) {
     try {
         onProgress?.(0);
 
+        const fetchOptions = {
+            method: r2Config && Object.keys(r2Config).length > 0 ? 'POST' : 'GET',
+            headers: { 'Content-Type': 'application/json' },
+            body: r2Config && Object.keys(r2Config).length > 0 ? JSON.stringify(r2Config) : undefined
+        };
+
         // 1. 取得檔案列表
         // 假設最多先拉取 1000 筆，為了安全性後端 limit 可能需要開大，或者透過分頁
-        const listRes = await fetch(`/api/files?prefix=${encodeURIComponent(prefix)}&limit=1000`);
+        const listRes = await fetch(`/api/files?prefix=${encodeURIComponent(prefix)}&limit=1000`, fetchOptions);
         if (!listRes.ok) throw new Error('Failed to list files');
 
         const { files } = await listRes.json();
@@ -58,7 +77,7 @@ export async function downloadFolderAsZip(
                 const file = queue.shift();
                 if (!file) break;
 
-                const res = await fetch(`/api/files?key=${encodeURIComponent(file.key)}`);
+                const res = await fetch(`/api/files?key=${encodeURIComponent(file.key)}`, fetchOptions);
                 if (res.ok) {
                     const content = await res.text();
                     // 計算相對路徑以便放入 Zip。若想讓前綴資料夾保留，可以自己做字串操作。
