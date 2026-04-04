@@ -299,7 +299,7 @@ export default function CrawlDocsFrontend() {
       const res = await fetch('/api/crawl', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input: inputValue, engineSettings }),
+        body: JSON.stringify({ input: activeInput, engineSettings }),
       });
 
       const data = await res.json();
@@ -889,8 +889,10 @@ export default function CrawlDocsFrontend() {
             </div>
 
 
+
             {/* Tracker Board / Scrape Result Preview */}
-            {sourceType === 'scrape' ? (
+            {/* 當有 taskId 時，優先顯示 Queue Tracker；否則 scrape 模式顯示即時預覽 */}
+            {sourceType === 'scrape' && !taskId ? (
               /* ===== Scrape 結果預覽面板 ===== */
               <div className="bg-black rounded-2xl overflow-hidden mb-8 relative flex flex-col shadow-inner border border-gray-900 border-opacity-50" style={{ minHeight: '280px' }}>
                 {!scrapeResult && !isScraping ? (
