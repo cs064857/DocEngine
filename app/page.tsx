@@ -1819,7 +1819,7 @@ export default function CrawlDocsFrontend() {
             onClick={() => setDrawerOpen(false)}
           />
           {/* 抽屜面板 */}
-          <div className="fixed inset-y-0 right-0 w-full sm:w-[440px] bg-[#F8F5EE] shadow-2xl z-50 flex flex-col" style={{ animation: 'slideIn 0.3s ease-out' }}>
+          <div className="fixed inset-y-0 right-0 w-full sm:w-[880px] bg-[#F8F5EE] shadow-2xl z-50 flex flex-col" style={{ animation: 'slideIn 0.3s ease-out' }}>
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-[#E5D5C5] bg-white">
               <div>
