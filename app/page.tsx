@@ -1953,13 +1953,21 @@ export default function CrawlDocsFrontend() {
                         {item.status === 'failed' && item.error && (
                           <p className="text-[10px] text-red-500 break-all mt-0.5">{item.error}</p>
                         )}
-                        {item.status === 'success' && taskStatus.date && (
-                          <p className="text-[10px] text-gray-400 font-mono mt-0.5 tracking-tight flex items-center gap-2">
-                            <span>Raw: {fileSizes[buildR2Key(item.url, 'raw', taskStatus.date)] !== undefined ? `${(fileSizes[buildR2Key(item.url, 'raw', taskStatus.date)] / 1024).toFixed(1)} KB` : 'N/A'}</span>
-                            <span className="text-gray-300">|</span>
-                            <span>Cleaned: {fileSizes[buildR2Key(item.url, 'cleaned', taskStatus.date)] !== undefined ? `${(fileSizes[buildR2Key(item.url, 'cleaned', taskStatus.date)] / 1024).toFixed(1)} KB` : 'N/A'}</span>
-                          </p>
-                        )}
+                        {item.status === 'success' && taskStatus.date && (() => {
+                          const rawSize = fileSizes[buildR2Key(item.url, 'raw', taskStatus.date)];
+                          const clnSize = fileSizes[buildR2Key(item.url, 'cleaned', taskStatus.date)];
+                          return (
+                            <p className="text-[10px] font-mono mt-0.5 tracking-tight flex items-center gap-2">
+                              <span className={rawSize === 0 ? 'text-red-500 font-bold' : 'text-gray-400'}>
+                                Raw: {rawSize !== undefined ? (rawSize === 0 ? '⚠ 0 B' : `${(rawSize / 1024).toFixed(1)} KB`) : 'N/A'}
+                              </span>
+                              <span className="text-gray-300">|</span>
+                              <span className={clnSize === 0 ? 'text-amber-500 font-bold' : 'text-gray-400'}>
+                                Cleaned: {clnSize !== undefined ? (clnSize === 0 ? '⚠ 0 B' : `${(clnSize / 1024).toFixed(1)} KB`) : 'N/A'}
+                              </span>
+                            </p>
+                          );
+                        })()}
                       </div>
                       {/* 狀態標籤 */}
                       <span className={`flex-shrink-0 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider font-bold ${item.status === 'pending' ? 'bg-gray-100 text-gray-500 border border-gray-200' :
