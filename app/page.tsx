@@ -682,6 +682,14 @@ export default function CrawlDocsFrontend() {
     }
   };
 
+  // 自動在 Drawer 開啟且有成功項目時 fetch 檔案大小
+  useEffect(() => {
+    if (drawerOpen && taskStatus?.urls?.some(u => u.status === 'success')) {
+      fetchFileSizes();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawerOpen, taskStatus?.status]);
+
   // === 檔案下載處理函式 ===
   const handleDownloadSingle = async (url: string, type: 'raw' | 'cleaned') => {
     if (!taskStatus?.date) return;
