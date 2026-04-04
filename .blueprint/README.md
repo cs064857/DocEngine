@@ -1,7 +1,7 @@
 # `.blueprint` 全域索引地圖
 
 此索引供 AI Agents 快速回答：**如果要找某個功能，應先去哪個 Bundle / 目錄。**
-目前 `crawldocs-web` 的 blueprint 可分成 **App Shell、同步抓取 API、非同步任務編排、儲存/執行期支援、內容處理服務鏈** 五個區塊。
+目前 `docengine` 的 blueprint 可分成 **App Shell、同步抓取 API、非同步任務編排、儲存/執行期支援、內容處理服務鏈** 五個區塊。
 
 ## 快速定位
 

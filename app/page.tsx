@@ -62,7 +62,7 @@ const DEFAULT_URL_EXTRACTOR_PROMPT = `You are a helpful assistant that extracts 
 Output ONLY a valid JSON object containing a "urls" key mapped to an array of strings.
 If no valid URLs are found, output {"urls": []}. Do not output any markdown formatting, only pure JSON.`;
 
-export default function CrawlDocsFrontend() {
+export default function DocEngineFrontend() {
   const [activeTab, setActiveTab] = useState<'tasks' | 'create' | 'storage' | 'settings'>('create');
   const [sourceType, setSourceType] = useState<'scrape' | 'crawl' | 'map'>('scrape');
   const [inputValue, setInputValue] = useState('');
@@ -156,7 +156,7 @@ export default function CrawlDocsFrontend() {
   // Load configuration from localStorage on mount
   useEffect(() => {
     setIsMounted(true);
-    const savedConfig = localStorage.getItem('crawldocsConfig');
+    const savedConfig = localStorage.getItem('docengineConfig');
     if (savedConfig) {
       try {
         const parsed = JSON.parse(savedConfig);
@@ -194,7 +194,7 @@ export default function CrawlDocsFrontend() {
         urlExtractorApiKey, urlExtractorBaseUrl, urlExtractorModel, urlExtractorPrompt,
         r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName
       };
-      localStorage.setItem('crawldocsConfig', JSON.stringify(configObj));
+      localStorage.setItem('docengineConfig', JSON.stringify(configObj));
     }
   }, [
     isMounted, depthLimit, maxConcurrency, maxUrls, maxRetries, urlTimeout, enableClean,
@@ -769,7 +769,7 @@ export default function CrawlDocsFrontend() {
       {/* Header */}
       <header className="w-full flex justify-between items-center px-8 py-6 max-w-5xl mx-auto">
         <div className="text-2xl font-bold tracking-tight text-gray-900">
-          CrawlDocs
+          DocEngine
         </div>
         <nav className="flex space-x-1 text-sm font-medium bg-[#F1EBE0] p-1 rounded-xl">
           {(['tasks', 'create', 'storage', 'settings'] as const).map((tab) => {
