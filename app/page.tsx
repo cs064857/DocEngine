@@ -72,6 +72,7 @@ export default function CrawlDocsFrontend() {
   const [maxConcurrency, setMaxConcurrency] = useState('2');
   const [maxUrls, setMaxUrls] = useState('1000');
   const [maxRetries, setMaxRetries] = useState('3');
+  const [urlTimeout, setUrlTimeout] = useState('300');
   const [enableClean, setEnableClean] = useState(true);
 
   // Content Cleaner 配置
@@ -139,6 +140,7 @@ export default function CrawlDocsFrontend() {
   // Task Progress Drawer 狀態
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [retryingUrls, setRetryingUrls] = useState<Set<string>>(new Set());
+  const [abortingUrls, setAbortingUrls] = useState<Set<string>>(new Set());
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
 
@@ -160,6 +162,7 @@ export default function CrawlDocsFrontend() {
         if (parsed.maxConcurrency !== undefined) setMaxConcurrency(parsed.maxConcurrency);
         if (parsed.maxUrls !== undefined) setMaxUrls(parsed.maxUrls);
         if (parsed.maxRetries !== undefined) setMaxRetries(parsed.maxRetries);
+        if (parsed.urlTimeout !== undefined) setUrlTimeout(parsed.urlTimeout);
         if (parsed.enableClean !== undefined) setEnableClean(parsed.enableClean);
         if (parsed.firecrawlKey !== undefined) setFirecrawlKey(parsed.firecrawlKey);
         if (parsed.llmApiKey !== undefined) setLlmApiKey(parsed.llmApiKey);
@@ -184,7 +187,7 @@ export default function CrawlDocsFrontend() {
   useEffect(() => {
     if (isMounted) {
       const configObj = {
-        depthLimit, maxConcurrency, maxUrls, maxRetries, enableClean,
+        depthLimit, maxConcurrency, maxUrls, maxRetries, urlTimeout, enableClean,
         firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt,
         urlExtractorApiKey, urlExtractorBaseUrl, urlExtractorModel, urlExtractorPrompt,
         r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName
@@ -192,7 +195,7 @@ export default function CrawlDocsFrontend() {
       localStorage.setItem('crawldocsConfig', JSON.stringify(configObj));
     }
   }, [
-    isMounted, depthLimit, maxConcurrency, maxUrls, maxRetries, enableClean,
+    isMounted, depthLimit, maxConcurrency, maxUrls, maxRetries, urlTimeout, enableClean,
     firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt,
     urlExtractorApiKey, urlExtractorBaseUrl, urlExtractorModel, urlExtractorPrompt,
     r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName
@@ -294,6 +297,7 @@ export default function CrawlDocsFrontend() {
       const engineSettings = {
         maxUrls,
         maxRetries,
+        urlTimeout: urlTimeout ? parseInt(urlTimeout) : undefined,
         enableClean,
         firecrawlKey: firecrawlKey || undefined,
         // Content Cleaner
@@ -535,6 +539,33 @@ export default function CrawlDocsFrontend() {
     if (!taskStatus || taskStatus.total === 0) return 0;
     return Math.round(((taskStatus.completed + taskStatus.failed) / taskStatus.total) * 100);
   };
+
+  // === 中斷處理函式 ===
+  const handleAbortSingle = useCallback(async (url: string) => {
+    if (!taskId || abortingUrls.has(url)) return;
+    setAbortingUrls(prev => new Set(prev).add(url));
+    try {
+      const es = {
+        r2AccountId: r2AccountId || undefined,
+        r2AccessKeyId: r2AccessKeyId || undefined,
+        r2SecretAccessKey: r2SecretAccessKey || undefined,
+        r2BucketName: r2BucketName || undefined,
+      };
+      await fetch('/api/abort', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId, urls: [url], engineSettings: es }),
+      });
+    } catch (e) {
+      console.error('Abort failed:', e);
+    } finally {
+      setAbortingUrls(prev => {
+        const next = new Set(prev);
+        next.delete(url);
+        return next;
+      });
+    }
+  }, [taskId, abortingUrls, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
 
   // === 重試處理函式 ===
   const handleRetrySingle = useCallback(async (url: string) => {
@@ -1289,6 +1320,18 @@ export default function CrawlDocsFrontend() {
                         </div>
                       </div>
 
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Per-URL Timeout (sec)</label>
+                        <input
+                          value={urlTimeout}
+                          onChange={(e) => setUrlTimeout(e.target.value)}
+                          className="w-full bg-white border border-[#E5D5C5] rounded-xl px-4 py-2 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                          placeholder="300"
+                          type="number"
+                          min="0"
+                        />
+                      </div>
+
                       <div className="pt-4 border-t border-[#E5D5C5] mt-6">
                         <label className="block text-sm font-medium text-gray-700 mb-3">Processor Flags</label>
                         <div className="space-y-3">
@@ -1801,9 +1844,9 @@ export default function CrawlDocsFrontend() {
                       </div>
                       {/* URL 與錯誤訊息 */}
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm text-gray-800 truncate font-mono" title={item.url}>{item.url}</p>
+                        <p className="text-sm text-gray-800 break-all font-mono leading-relaxed">{item.url}</p>
                         {item.status === 'failed' && item.error && (
-                          <p className="text-[10px] text-red-400 truncate mt-0.5" title={item.error}>{item.error}</p>
+                          <p className="text-[10px] text-red-400 break-all mt-0.5">{item.error}</p>
                         )}
                       </div>
                       {/* 狀態標籤 */}
@@ -1814,6 +1857,24 @@ export default function CrawlDocsFrontend() {
                         }`}>
                         {item.status}
                       </span>
+                      {/* 中斷按鈕（pending / processing） */}
+                      {(item.status === 'pending' || item.status === 'processing') && (
+                        <button
+                          onClick={() => handleAbortSingle(item.url)}
+                          disabled={abortingUrls.has(item.url)}
+                          className="flex-shrink-0 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                          title="Abort this URL"
+                        >
+                          {abortingUrls.has(item.url) ? (
+                            <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25"></circle>
+                              <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor" className="opacity-75"></path>
+                            </svg>
+                          ) : (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></rect></svg>
+                          )}
+                        </button>
+                      )}
                       {/* 單筆重試按鈕 */}
                       {item.status === 'failed' && (
                         <button

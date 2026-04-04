@@ -38,6 +38,8 @@ export interface CrawlJobPayload {
     urlExtractorPrompt?: string;
     // 專案限額與重試配置
     maxRetries?: number;
+    // 單一 URL 超時（秒），預設 300
+    urlTimeout?: number;
     // R2 儲存覆蓋配置
     r2AccountId?: string;
     r2AccessKeyId?: string;
@@ -59,49 +61,90 @@ function extractR2Overrides(engineSettings?: CrawlJobPayload['engineSettings']):
   };
 }
 
+/**
+ * 標記 URL 為 processing 狀態（解決 pending 卡住問題）
+ */
+async function markUrlProcessing(taskId: string, url: string, r2?: R2Overrides) {
+  try {
+    const taskStatus = await getTaskStatus(taskId, r2);
+    if (!taskStatus?.urls) return;
+    const entry = taskStatus.urls.find(u => u.url === url);
+    if (entry && (entry.status === 'pending' || entry.status === 'failed')) {
+      entry.status = 'processing';
+      await putTaskStatus(taskId, taskStatus, r2);
+    }
+  } catch (e) {
+    console.error(`[Queue] Failed to mark ${url} as processing`, e);
+  }
+}
+
+/**
+ * 以超時包裝非同步操作
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, url: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`URL processing timed out after ${timeoutMs / 1000}s: ${url}`));
+    }, timeoutMs);
+
+    promise
+      .then((result) => { clearTimeout(timer); resolve(result); })
+      .catch((err) => { clearTimeout(timer); reject(err); });
+  });
+}
+
 export const POST = handleCallback<CrawlJobPayload>(
   async (message, metadata) => {
     const { taskId, url, date, engineSettings } = message;
     const r2 = extractR2Overrides(engineSettings);
 
+    // 標記 URL 為 processing 狀態
+    await markUrlProcessing(taskId, url, r2);
+
     console.log(`[Queue] Processing URL: ${url} (Task: ${taskId}, attempt ${metadata.deliveryCount})`);
 
+    // 計算超時（預設 300 秒）
+    const timeoutMs = (engineSettings?.urlTimeout ?? 300) * 1000;
+
     try {
-      // 1. Firecrawl scrape
-      const crawlerConfig = {
-        apiKey: engineSettings?.firecrawlKey,
-        apiUrl: engineSettings?.firecrawlUrl,
-      };
-
-      const rawMarkdown = await scrapeUrl(url, crawlerConfig);
-
-      // 2. Save raw -> R2
-      const rawKey = buildR2Key(url, 'raw', date);
-      await putObject(rawKey, rawMarkdown, 'text/markdown', r2);
-      console.log(`[Queue] Saved raw markdown to ${rawKey}`);
-
-      let cleanedMarkdown = rawMarkdown;
-
-      // 3. LLM clean (Only runs if enableClean is missing or strictly true, and rawMarkdown is not empty)
-      if (engineSettings?.enableClean !== false && rawMarkdown.trim().length > 0) {
-        const cleanerConfig = {
-          model: engineSettings?.llmModel,
-          apiKey: engineSettings?.llmApiKey,
-          baseUrl: engineSettings?.llmBaseUrl,
-          prompt: engineSettings?.cleaningPrompt,
+      // 將整個處理流程包裝在超時內
+      await withTimeout((async () => {
+        // 1. Firecrawl scrape
+        const crawlerConfig = {
+          apiKey: engineSettings?.firecrawlKey,
+          apiUrl: engineSettings?.firecrawlUrl,
         };
-        cleanedMarkdown = await cleanContent(rawMarkdown, cleanerConfig);
-      }
 
-      // 4. Save cleaned -> R2
-      const cleanedKey = buildR2Key(url, 'cleaned', date);
-      await putObject(cleanedKey, cleanedMarkdown, 'text/markdown', r2);
-      console.log(`[Queue] Saved cleaned markdown to ${cleanedKey}`);
+        const rawMarkdown = await scrapeUrl(url, crawlerConfig);
 
-      // 5. Update Task Status -> Success
-      await updateTaskStatus(taskId, url, true, undefined, r2);
+        // 2. Save raw -> R2
+        const rawKey = buildR2Key(url, 'raw', date);
+        await putObject(rawKey, rawMarkdown, 'text/markdown', r2);
+        console.log(`[Queue] Saved raw markdown to ${rawKey}`);
 
-      console.log(`[Queue] Successfully processed URL: ${url}`);
+        let cleanedMarkdown = rawMarkdown;
+
+        // 3. LLM clean (Only runs if enableClean is missing or strictly true, and rawMarkdown is not empty)
+        if (engineSettings?.enableClean !== false && rawMarkdown.trim().length > 0) {
+          const cleanerConfig = {
+            model: engineSettings?.llmModel,
+            apiKey: engineSettings?.llmApiKey,
+            baseUrl: engineSettings?.llmBaseUrl,
+            prompt: engineSettings?.cleaningPrompt,
+          };
+          cleanedMarkdown = await cleanContent(rawMarkdown, cleanerConfig);
+        }
+
+        // 4. Save cleaned -> R2
+        const cleanedKey = buildR2Key(url, 'cleaned', date);
+        await putObject(cleanedKey, cleanedMarkdown, 'text/markdown', r2);
+        console.log(`[Queue] Saved cleaned markdown to ${cleanedKey}`);
+
+        // 5. Update Task Status -> Success
+        await updateTaskStatus(taskId, url, true, undefined, r2);
+
+        console.log(`[Queue] Successfully processed URL: ${url}`);
+      })(), timeoutMs, url);
 
     } catch (error: unknown) {
       console.error(`[Queue] Error processing URL: ${url}`, error);
