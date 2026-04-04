@@ -630,6 +630,23 @@ export default function CrawlDocsFrontend() {
     }
   }, [taskId, taskStatus, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
 
+  // 輔助函式：將異常或 0B 的檔案標示為失敗，以便重試
+  const markKeysAsFailed = (failedList: { key: string, reason: string }[]) => {
+    setTaskStatus(prev => {
+      if (!prev || !prev.date || !prev.urls) return prev;
+      const newUrls = prev.urls.map(item => {
+        const keyCleaned = buildR2Key(item.url, 'cleaned', prev.date!);
+        const keyRaw = buildR2Key(item.url, 'raw', prev.date!);
+        const hit = failedList.find(f => f.key === keyCleaned || f.key === keyRaw);
+        if (hit) {
+          return { ...item, status: 'failed' as const, error: hit.reason };
+        }
+        return item;
+      });
+      return { ...prev, urls: newUrls };
+    });
+  };
+
   // === 檔案下載處理函式 ===
   const handleDownloadSingle = async (url: string) => {
     if (!taskStatus?.date) return;
@@ -638,30 +655,28 @@ export default function CrawlDocsFrontend() {
 
     try {
       // 嘗試優先下載 cleaned，若失敗（或未啟用）對應不到則嘗試下載 raw
-      // 若已知確定的狀態，這裡用 try-catch 嘗試兩種 prefix 是最安全的做法
       const preferredSubdir = enableClean ? 'cleaned' : 'raw';
       const key = buildR2Key(url, preferredSubdir, taskStatus.date);
       await downloadSingleFile(key, r2Config);
-    } catch (e) {
+    } catch (e: any) {
       console.warn('First download failed, trying fallback...', e);
       // Fallback
-      if (!enableClean) return; // 如果本來就是 raw 失敗就不再試了
+      if (!enableClean) {
+        markKeysAsFailed([{ key: buildR2Key(url, 'raw', taskStatus.date), reason: e.message || 'File is empty or not found' }]);
+        return;
+      }
       try {
         const fallbackKey = buildR2Key(url, 'raw', taskStatus.date);
         await downloadSingleFile(fallbackKey, r2Config);
-      } catch (err) {
+      } catch (err: any) {
         console.error('Download single failed:', err);
-        alert('檔案可能尚未就緒或發生錯誤。');
+        markKeysAsFailed([{ key: buildR2Key(url, 'raw', taskStatus.date), reason: err.message || 'File is empty or not found' }]);
       }
     }
   };
 
   const handleDownloadAll = async () => {
     if (!taskStatus?.date) return;
-    // 使用任務日期作為根目錄來下載該日的資料
-    // 但因為同一個日期下可能有多個網域/任務，更精確的做法是：
-    // 若該任務所有的 URL 都屬於同樣的 Domain，可以鎖定特定的 domain prefix。
-    // 在這裡我們先找出第一筆成功 URL 的 domain 作為 prefix 的核心
     const firstSuccessUrl = taskStatus.urls?.find(u => u.status === 'success')?.url;
     if (!firstSuccessUrl) {
       alert('無成功解析的檔案可供下載。');
@@ -675,17 +690,23 @@ export default function CrawlDocsFrontend() {
       const parsed = new URL(firstSuccessUrl);
       const domain = parsed.hostname;
       const subdir = enableClean ? 'cleaned' : 'raw';
-      // 下載整個對應任務特定 Domain 與日期的資料夾
       const prefix = `${subdir}/${taskStatus.date}/${domain}/`;
 
       const r2Config = { r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName };
 
-      await downloadFolderAsZip(prefix, `Task-${taskId}-${domain}`, r2Config, (pct: number) => {
+      const { failedKeys } = await downloadFolderAsZip(prefix, `Task-${taskId}-${domain}`, r2Config, (pct: number) => {
         setDownloadProgress(pct);
       });
-    } catch (e) {
+
+      if (failedKeys && failedKeys.length > 0) {
+        setTimeout(() => {
+          alert(`下載完成，但有 ${failedKeys.length} 個檔案異常(如空檔 0B)。\n異常紀錄已寫入 ZIP 內的 download_errors.txt，並在原畫面上標示為 Failed 以利您後續點擊重試。`);
+          markKeysAsFailed(failedKeys);
+        }, 300);
+      }
+    } catch (e: any) {
       console.error('Download All failed:', e);
-      alert('批次下載發生錯誤，請稍後再試。');
+      alert('批次下載發生錯誤，請稍後再試。\n' + (e.message || ''));
     } finally {
       setIsDownloading(false);
       setTimeout(() => setDownloadProgress(0), 1500); // 延遲清空讓使用者看到 100%
