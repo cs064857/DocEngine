@@ -1595,7 +1595,7 @@ export default function CrawlDocsFrontend() {
                       <button
                         onClick={() => {
                           setTaskId(t.taskId);
-                          setActiveTab('create');
+                          setDrawerOpen(true);
                         }}
                         className="shrink-0 bg-white border border-[#D5C5B5] text-[#845400] hover:bg-[#FDF8EB] hover:border-[#845400] px-4 py-2 rounded-xl text-xs font-semibold shadow-sm transition-all"
                       >
@@ -1610,6 +1610,23 @@ export default function CrawlDocsFrontend() {
         )}
 
       </main>
+
+      {/* 浮動開啟 Drawer 按鈕 — 當有 taskId 但 Drawer 關閉時顯示 */}
+      {taskId && !drawerOpen && (
+        <button
+          onClick={() => setDrawerOpen(true)}
+          className="fixed bottom-6 right-6 z-30 flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-700 hover:to-amber-600 text-white rounded-full shadow-lg hover:shadow-xl transition-all text-sm font-medium"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+          Task Progress
+          {taskStatus && taskStatus.status === 'processing' && (
+            <span className="flex h-2 w-2 relative">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+            </span>
+          )}
+        </button>
+      )}
 
       {/* ==================== TASK PROGRESS DRAWER ==================== */}
       {drawerOpen && taskId && (
@@ -1653,8 +1670,8 @@ export default function CrawlDocsFrontend() {
                   {taskStatus ? `${taskStatus.completed + taskStatus.failed} / ${taskStatus.total}` : '0 / 0'}
                 </span>
                 <span className={`text-[10px] px-2.5 py-0.5 rounded-full uppercase tracking-wider font-bold border ${taskStatus?.status === 'completed' ? 'bg-green-100 text-green-700 border-green-200' :
-                    taskStatus?.status === 'failed' ? 'bg-red-100 text-red-700 border-red-200' :
-                      'bg-amber-100 text-amber-700 border-amber-200'
+                  taskStatus?.status === 'failed' ? 'bg-red-100 text-red-700 border-red-200' :
+                    'bg-amber-100 text-amber-700 border-amber-200'
                   }`}>
                   {taskStatus?.status || 'pending'}
                 </span>
@@ -1711,9 +1728,9 @@ export default function CrawlDocsFrontend() {
                       </div>
                       {/* 狀態標籤 */}
                       <span className={`flex-shrink-0 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider font-bold ${item.status === 'pending' ? 'bg-gray-100 text-gray-500 border border-gray-200' :
-                          item.status === 'processing' ? 'bg-amber-100 text-amber-700 border border-amber-200' :
-                            item.status === 'success' ? 'bg-green-100 text-green-700 border border-green-200' :
-                              'bg-red-100 text-red-700 border border-red-200'
+                        item.status === 'processing' ? 'bg-amber-100 text-amber-700 border border-amber-200' :
+                          item.status === 'success' ? 'bg-green-100 text-green-700 border border-green-200' :
+                            'bg-red-100 text-red-700 border border-red-200'
                         }`}>
                         {item.status}
                       </span>
