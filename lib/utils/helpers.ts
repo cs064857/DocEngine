@@ -22,12 +22,12 @@ export function buildR2Key(url: string, subdir: 'raw' | 'cleaned', date: string)
   try {
     const parsed = new URL(url);
     const domain = parsed.hostname;
-    // use pathname, replace leading/trailing slashes, replace remaining inside slashes w/ hyphens
-    let path = parsed.pathname.replace(/^\/|\/$/g, '').replace(/\//g, '-');
+    // 保留 URL 路徑層級作為 R2 資料夾結構，僅移除首尾斜線
+    let path = parsed.pathname.replace(/^\/|\/$/g, '');
     if (!path) {
       path = 'index';
     }
-    
+
     // Add missing extension
     if (!path.endsWith('.md') && !path.endsWith('.html')) {
       path += '.md';
