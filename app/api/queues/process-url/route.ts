@@ -69,12 +69,12 @@ export const POST = handleCallback<CrawlJobPayload>(
     try {
       // 1. Firecrawl scrape
       const crawlerConfig = {
-         apiKey: engineSettings?.firecrawlKey,
-         apiUrl: engineSettings?.firecrawlUrl,
+        apiKey: engineSettings?.firecrawlKey,
+        apiUrl: engineSettings?.firecrawlUrl,
       };
-      
+
       const rawMarkdown = await scrapeUrl(url, crawlerConfig);
-      
+
       // 2. Save raw -> R2
       const rawKey = buildR2Key(url, 'raw', date);
       await putObject(rawKey, rawMarkdown, 'text/markdown', r2);
@@ -85,10 +85,10 @@ export const POST = handleCallback<CrawlJobPayload>(
       // 3. LLM clean (Only runs if enableClean is missing or strictly true, and rawMarkdown is not empty)
       if (engineSettings?.enableClean !== false && rawMarkdown.trim().length > 0) {
         const cleanerConfig = {
-           model: engineSettings?.llmModel,
-           apiKey: engineSettings?.llmApiKey,
-           baseUrl: engineSettings?.llmBaseUrl,
-           prompt: engineSettings?.cleaningPrompt,
+          model: engineSettings?.llmModel,
+          apiKey: engineSettings?.llmApiKey,
+          baseUrl: engineSettings?.llmBaseUrl,
+          prompt: engineSettings?.cleaningPrompt,
         };
         cleanedMarkdown = await cleanContent(rawMarkdown, cleanerConfig);
       }
@@ -102,25 +102,25 @@ export const POST = handleCallback<CrawlJobPayload>(
       await updateTaskStatus(taskId, url, true, undefined, r2);
 
       console.log(`[Queue] Successfully processed URL: ${url}`);
-      
+
     } catch (error: unknown) {
       console.error(`[Queue] Error processing URL: ${url}`, error);
-      
+
       const r2 = extractR2Overrides(engineSettings);
       const userMaxRetries = engineSettings?.maxRetries ?? config.project.retryAttempts;
       const isFinalAttempt = metadata.deliveryCount >= userMaxRetries;
-      
+
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
       if (isFinalAttempt) {
-         console.log(`[Queue] Max retries reached for ${url}. Marking as failed.`);
-         await updateTaskStatus(taskId, url, false, errorMessage, r2);
+        console.log(`[Queue] Max retries reached for ${url}. Marking as failed.`);
+        await updateTaskStatus(taskId, url, false, errorMessage, r2);
       } else {
-         console.log(`[Queue] Attempt ${metadata.deliveryCount}/${userMaxRetries} failed for ${url}. Logging retry to R2.`);
-         await logRetryAttempt(taskId, url, metadata.deliveryCount, userMaxRetries, errorMessage, r2);
+        console.log(`[Queue] Attempt ${metadata.deliveryCount}/${userMaxRetries} failed for ${url}. Logging retry to R2.`);
+        await logRetryAttempt(taskId, url, metadata.deliveryCount, userMaxRetries, errorMessage, r2);
       }
-      
-      throw new QueueRetryError(errorMessage, userMaxRetries); 
+
+      throw new QueueRetryError(errorMessage, userMaxRetries);
     }
   },
   {
@@ -154,6 +154,15 @@ async function updateTaskStatus(taskId: string, url: string, success: boolean, e
       taskStatus.failedUrls.push({ url, error: errorMessage || 'Unknown' });
     }
 
+    // 更新個別 URL 的追蹤狀態
+    if (taskStatus.urls) {
+      const urlEntry = taskStatus.urls.find(u => u.url === url);
+      if (urlEntry) {
+        urlEntry.status = success ? 'success' : 'failed';
+        if (!success) urlEntry.error = errorMessage;
+      }
+    }
+
     if (taskStatus.retryingUrls) {
       taskStatus.retryingUrls = taskStatus.retryingUrls.filter(r => r.url !== url);
     }
@@ -176,7 +185,7 @@ async function logRetryAttempt(taskId: string, url: string, attempts: number, ma
   try {
     const taskStatus = await getTaskStatus(taskId, r2);
     if (!taskStatus) return;
-    
+
     if (!taskStatus.retryingUrls) {
       taskStatus.retryingUrls = [];
     }
@@ -187,7 +196,7 @@ async function logRetryAttempt(taskId: string, url: string, attempts: number, ma
     } else {
       taskStatus.retryingUrls.push({ url, attempts, maxRetries, error: errorMsg });
     }
-    
+
     await putTaskStatus(taskId, taskStatus, r2);
   } catch (error) {
     console.error(`[Queue] Failed to log retry attempt for ${url}`, error);

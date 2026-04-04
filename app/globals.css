@@ -54,3 +54,24 @@ input[type=range]::-webkit-slider-runnable-track {
   background: #E5D5C5;
   border-radius: 2px;
 }
+
+/* Drawer slide-in animation */
+@keyframes slideIn {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+/* Custom scrollbar for Drawer */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #D5C5B5;
+  border-radius: 2px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #A8491A;
+}

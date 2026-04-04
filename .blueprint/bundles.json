@@ -1,0 +1,53 @@
+{
+  "bundles": [
+    {
+      "id": "nextjs-app-shell",
+      "summary": "Next.js 應用外殼與全域入口設定，涵蓋框架型別宣告、建置設定與根頁面結構。",
+      "files": [
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/next-env.d.ts",
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/next.config.ts",
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/layout.tsx",
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/page.tsx"
+      ]
+    },
+    {
+      "id": "crawl-ingestion-api",
+      "summary": "面向抓取、爬行與網址映射的 API 入口",
+      "files": [
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/crawl/route.ts",
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/map/route.ts",
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/scrape/route.ts"
+      ]
+    },
+    {
+      "id": "task-queue-orchestration-api",
+      "summary": "非同步任務建立、佇列處理與狀態查詢相關 API",
+      "files": [
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/crawl-job/route.ts",
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/queues/process-url/route.ts",
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/status/[taskId]/route.ts",
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/tasks/route.ts"
+      ]
+    },
+    {
+      "id": "storage-config-runtime-support",
+      "summary": "檔案存取 API 與執行期基礎設施支援，涵蓋設定載入、R2 儲存適配與共用命名/路徑輔助。",
+      "files": [
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/files/route.ts",
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/lib/config.ts",
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/lib/r2.ts",
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/lib/utils/helpers.ts"
+      ]
+    },
+    {
+      "id": "crawl-processing-services",
+      "summary": "爬蟲服務、LLM 處理與內容清洗/網址抽取流程核心",
+      "files": [
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/lib/processors/cleaner.ts",
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/lib/processors/url-extractor.ts",
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/lib/services/crawler.ts",
+        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/lib/services/llm.ts"
+      ]
+    }
+  ]
+}

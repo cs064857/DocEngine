@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     }
 
     console.log('[API Crawl] Extracting URLs...');
-    
+
     // 組合 URL Extractor 覆蓋配置
     const urlExtractorOverrides = {
       apiKey: engineSettings?.urlExtractorApiKey || undefined,
@@ -62,24 +62,25 @@ export async function POST(req: NextRequest) {
       failed: 0,
       failedUrls: [],
       retryingUrls: [],
+      urls: urls.map(u => ({ url: u, status: 'pending' as const })),
       date,
     }, r2Overrides);
 
     // Send jobs to queue topic 'crawl-urls'
     console.log(`[API Crawl] Sending ${urls.length} messages to Queue...`);
-    
+
     const queuePromises = urls.map(url => {
       // payload structure matches what processor expects
-      return send('crawl-urls', { 
-        taskId, 
-        url, 
+      return send('crawl-urls', {
+        taskId,
+        url,
         date,
         engineSettings
       });
     });
-    
+
     await Promise.all(queuePromises);
-    
+
     console.log(`[API Crawl] Task ${taskId} started successfully.`);
 
     return NextResponse.json({
@@ -92,9 +93,9 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     console.error('[API Crawl] Internal Error:', error);
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ 
-      error: 'Failed to queue task', 
-      details: msg 
+    return NextResponse.json({
+      error: 'Failed to queue task',
+      details: msg
     }, { status: 500 });
   }
 }

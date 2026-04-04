@@ -10,6 +10,8 @@ export interface JobTask {
   failed: number;
   failedUrls: { url: string; error: string }[];
   retryingUrls?: { url: string; attempts: number; maxRetries: number; error: string }[];
+  /** 個別 URL 的處理狀態追蹤清單 */
+  urls?: { url: string; status: 'pending' | 'processing' | 'success' | 'failed'; error?: string }[];
   date: string;
 }
 

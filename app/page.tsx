@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 // Defines the shape of standard Crawl Task metrics
 interface JobTask {
@@ -11,6 +11,7 @@ interface JobTask {
   failed: number;
   failedUrls: { url: string; error: string }[];
   retryingUrls?: { url: string; attempts: number; maxRetries: number; error: string }[];
+  urls?: { url: string; status: 'pending' | 'processing' | 'success' | 'failed'; error?: string }[];
   date: string;
 }
 
@@ -132,6 +133,10 @@ export default function CrawlDocsFrontend() {
   const [taskStatus, setTaskStatus] = useState<JobTask | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // Task Progress Drawer 狀態
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [retryingUrls, setRetryingUrls] = useState<Set<string>>(new Set());
+
   // History tasks state
   const [tasksList, setTasksList] = useState<JobTask[]>([]);
   const [isTasksLoading, setIsTasksLoading] = useState(false);
@@ -226,6 +231,13 @@ export default function CrawlDocsFrontend() {
     fetchStatus(); // initial call
 
     return () => clearInterval(interval);
+  }, [taskId]);
+
+  // 當 taskId 被設定時自動打開 Drawer
+  useEffect(() => {
+    if (taskId) {
+      setDrawerOpen(true);
+    }
   }, [taskId]);
 
   // Fetch History Tasks
@@ -518,6 +530,69 @@ export default function CrawlDocsFrontend() {
     if (!taskStatus || taskStatus.total === 0) return 0;
     return Math.round(((taskStatus.completed + taskStatus.failed) / taskStatus.total) * 100);
   };
+
+  // === 重試處理函式 ===
+  const handleRetrySingle = useCallback(async (url: string) => {
+    if (!taskId || retryingUrls.has(url)) return;
+    setRetryingUrls(prev => new Set(prev).add(url));
+    try {
+      const es = {
+        firecrawlKey: firecrawlKey || undefined,
+        llmApiKey: llmApiKey || undefined,
+        llmModel: llmModelName || undefined,
+        llmBaseUrl: llmBaseUrl || undefined,
+        cleaningPrompt: cleaningPrompt !== DEFAULT_CLEANING_PROMPT ? cleaningPrompt : undefined,
+        enableClean,
+        r2AccountId: r2AccountId || undefined,
+        r2AccessKeyId: r2AccessKeyId || undefined,
+        r2SecretAccessKey: r2SecretAccessKey || undefined,
+        r2BucketName: r2BucketName || undefined,
+      };
+      await fetch('/api/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId, urls: [url], engineSettings: es }),
+      });
+    } catch (e) {
+      console.error('Retry failed:', e);
+    } finally {
+      setRetryingUrls(prev => {
+        const next = new Set(prev);
+        next.delete(url);
+        return next;
+      });
+    }
+  }, [taskId, retryingUrls, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
+
+  const handleRetryAllFailed = useCallback(async () => {
+    if (!taskId || !taskStatus?.urls) return;
+    const failedList = taskStatus.urls.filter(u => u.status === 'failed').map(u => u.url);
+    if (failedList.length === 0) return;
+    setRetryingUrls(new Set(failedList));
+    try {
+      const es = {
+        firecrawlKey: firecrawlKey || undefined,
+        llmApiKey: llmApiKey || undefined,
+        llmModel: llmModelName || undefined,
+        llmBaseUrl: llmBaseUrl || undefined,
+        cleaningPrompt: cleaningPrompt !== DEFAULT_CLEANING_PROMPT ? cleaningPrompt : undefined,
+        enableClean,
+        r2AccountId: r2AccountId || undefined,
+        r2AccessKeyId: r2AccessKeyId || undefined,
+        r2SecretAccessKey: r2SecretAccessKey || undefined,
+        r2BucketName: r2BucketName || undefined,
+      };
+      await fetch('/api/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId, urls: failedList, engineSettings: es }),
+      });
+    } catch (e) {
+      console.error('Retry all failed:', e);
+    } finally {
+      setRetryingUrls(new Set());
+    }
+  }, [taskId, taskStatus, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
 
   return (
     <div className="text-gray-800 antialiased min-h-screen pb-16">
@@ -1535,6 +1610,159 @@ export default function CrawlDocsFrontend() {
         )}
 
       </main>
+
+      {/* ==================== TASK PROGRESS DRAWER ==================== */}
+      {drawerOpen && taskId && (
+        <>
+          {/* 遮罩 */}
+          <div
+            className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40 transition-opacity"
+            onClick={() => setDrawerOpen(false)}
+          />
+          {/* 抽屜面板 */}
+          <div className="fixed inset-y-0 right-0 w-full sm:w-[440px] bg-[#F8F5EE] shadow-2xl z-50 flex flex-col" style={{ animation: 'slideIn 0.3s ease-out' }}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[#E5D5C5] bg-white">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900 tracking-tight">Task Progress</h2>
+                <p className="text-[10px] text-gray-400 font-mono mt-0.5">ID: {taskId}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {taskStatus?.urls?.some(u => u.status === 'failed') && (
+                  <button
+                    onClick={handleRetryAllFailed}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs font-medium hover:bg-red-100 transition-all"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                    Retry All Failed
+                  </button>
+                )}
+                <button
+                  onClick={() => setDrawerOpen(false)}
+                  className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-all"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+              </div>
+            </div>
+
+            {/* 進度條與統計 */}
+            <div className="px-6 py-4 bg-white border-b border-[#E5D5C5]">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-semibold text-gray-700">
+                  {taskStatus ? `${taskStatus.completed + taskStatus.failed} / ${taskStatus.total}` : '0 / 0'}
+                </span>
+                <span className={`text-[10px] px-2.5 py-0.5 rounded-full uppercase tracking-wider font-bold border ${taskStatus?.status === 'completed' ? 'bg-green-100 text-green-700 border-green-200' :
+                    taskStatus?.status === 'failed' ? 'bg-red-100 text-red-700 border-red-200' :
+                      'bg-amber-100 text-amber-700 border-amber-200'
+                  }`}>
+                  {taskStatus?.status || 'pending'}
+                </span>
+              </div>
+              <div className="w-full h-2 bg-[#E5D5C5] rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-amber-500 to-amber-400 rounded-full transition-all duration-500 ease-out"
+                  style={{ width: `${calculateProgress()}%` }}
+                ></div>
+              </div>
+              <div className="flex gap-4 mt-2.5 text-xs">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                  <span className="text-gray-600 font-medium">{taskStatus?.completed || 0} success</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                  <span className="text-gray-600 font-medium">{taskStatus?.failed || 0} failed</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-gray-300"></span>
+                  <span className="text-gray-600 font-medium">{Math.max(0, (taskStatus?.total || 0) - (taskStatus?.completed || 0) - (taskStatus?.failed || 0))} pending</span>
+                </span>
+              </div>
+            </div>
+
+            {/* URL 清單 */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+              {taskStatus?.urls && taskStatus.urls.length > 0 ? (
+                <ul className="divide-y divide-[#E5D5C5]">
+                  {taskStatus.urls.map((item, idx) => (
+                    <li key={`${item.url}-${idx}`} className="px-6 py-3 flex items-center gap-3 hover:bg-white/60 transition-colors">
+                      {/* 狀態圖示 */}
+                      <div className="flex-shrink-0 w-6 h-6 flex items-center justify-center">
+                        {item.status === 'pending' ? (
+                          <span className="w-2.5 h-2.5 rounded-full bg-gray-300 border border-gray-400"></span>
+                        ) : item.status === 'processing' ? (
+                          <svg className="animate-spin w-4 h-4 text-amber-500" viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25"></circle>
+                            <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor" className="opacity-75"></path>
+                          </svg>
+                        ) : item.status === 'success' ? (
+                          <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path></svg>
+                        ) : (
+                          <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        )}
+                      </div>
+                      {/* URL 與錯誤訊息 */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-gray-800 truncate font-mono" title={item.url}>{item.url}</p>
+                        {item.status === 'failed' && item.error && (
+                          <p className="text-[10px] text-red-400 truncate mt-0.5" title={item.error}>{item.error}</p>
+                        )}
+                      </div>
+                      {/* 狀態標籤 */}
+                      <span className={`flex-shrink-0 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider font-bold ${item.status === 'pending' ? 'bg-gray-100 text-gray-500 border border-gray-200' :
+                          item.status === 'processing' ? 'bg-amber-100 text-amber-700 border border-amber-200' :
+                            item.status === 'success' ? 'bg-green-100 text-green-700 border border-green-200' :
+                              'bg-red-100 text-red-700 border border-red-200'
+                        }`}>
+                        {item.status}
+                      </span>
+                      {/* 單筆重試按鈕 */}
+                      {item.status === 'failed' && (
+                        <button
+                          onClick={() => handleRetrySingle(item.url)}
+                          disabled={retryingUrls.has(item.url)}
+                          className="flex-shrink-0 p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                          title="Retry this URL"
+                        >
+                          {retryingUrls.has(item.url) ? (
+                            <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+                              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25"></circle>
+                              <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" fill="currentColor" className="opacity-75"></path>
+                            </svg>
+                          ) : (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                          )}
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="flex items-center justify-center h-full py-16 opacity-50">
+                  <div className="text-center">
+                    <svg className="w-10 h-10 text-gray-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+                    <p className="text-sm text-gray-400">Waiting for URL data...</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Drawer 底部 */}
+            <div className="px-6 py-3 border-t border-[#E5D5C5] bg-white flex items-center justify-between">
+              <span className="text-[10px] text-gray-400">
+                {taskStatus?.date ? new Date(taskStatus.date).toLocaleString() : ''}
+              </span>
+              <button
+                onClick={() => setDrawerOpen(false)}
+                className="px-4 py-1.5 text-xs font-medium text-gray-600 bg-[#F1EBE0] hover:bg-[#E5D5C5] rounded-lg transition-all"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
