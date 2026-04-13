@@ -14,6 +14,11 @@ export const config = {
       apiKey: process.env.CONTENT_CLEANER_API_KEY!,
       model: process.env.CONTENT_CLEANER_MODEL || 'glm-4-flash',
     },
+    skillGenerator: {
+      baseUrl: process.env.SKILL_GENERATOR_BASE_URL || 'https://api.openai.com/v1',
+      apiKey: process.env.SKILL_GENERATOR_API_KEY || '',
+      model: process.env.SKILL_GENERATOR_MODEL || 'gpt-4o',
+    },
   },
   r2: {
     accountId: process.env.R2_ACCOUNT_ID || '',

@@ -1,9 +1,11 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { checkCrawlJob, startCrawlJob } from '@/lib/services/crawler';
 import { downloadSingleFile, downloadFolderAsZip } from '@/lib/utils/download';
 import { buildR2Key } from '@/lib/utils/helpers';
+import type { CodexAuthState } from '@/lib/oauth/codex';
+import type { SkillTaskStatus } from '@/app/api/generate-skill/route';
 
 // Defines the shape of standard Crawl Task metrics
 interface JobTask {
@@ -63,7 +65,7 @@ Output ONLY a valid JSON object containing a "urls" key mapped to an array of st
 If no valid URLs are found, output {"urls": []}. Do not output any markdown formatting, only pure JSON.`;
 
 export default function DocEngineFrontend() {
-  const [activeTab, setActiveTab] = useState<'tasks' | 'create' | 'storage' | 'settings'>('create');
+  const [activeTab, setActiveTab] = useState<'tasks' | 'create' | 'skill' | 'storage' | 'settings'>('create');
   const [sourceType, setSourceType] = useState<'scrape' | 'crawl' | 'map'>('scrape');
   const [inputValue, setInputValue] = useState('');
 
@@ -149,6 +151,23 @@ export default function DocEngineFrontend() {
   // History tasks state
   const [tasksList, setTasksList] = useState<JobTask[]>([]);
   const [isTasksLoading, setIsTasksLoading] = useState(false);
+
+  // ====== Skill Generator State ======
+  const [skillAuthMode, setSkillAuthMode] = useState<'oauth' | 'apikey'>('apikey');
+  const [codexAuth, setCodexAuth] = useState<CodexAuthState | null>(null);
+  const [skillApiKey, setSkillApiKey] = useState('');
+  const [skillBaseUrl, setSkillBaseUrl] = useState('https://api.openai.com/v1');
+  const [skillModel, setSkillModel] = useState('gpt-4o');
+  const [availableFolders, setAvailableFolders] = useState<{ date: string; domain: string; prefix: string; fileCount: number }[]>([]);
+  const [selectedFolder, setSelectedFolder] = useState<string>('');
+  const [skillCustomPrompt, setSkillCustomPrompt] = useState('');
+  const [showSkillPrompt, setShowSkillPrompt] = useState(false);
+  const [skillTaskId, setSkillTaskId] = useState<string | null>(null);
+  const [skillStatus, setSkillStatus] = useState<SkillTaskStatus | null>(null);
+  const [isSkillSubmitting, setIsSkillSubmitting] = useState(false);
+  const [skillError, setSkillError] = useState('');
+  const [isFoldersLoading, setIsFoldersLoading] = useState(false);
+  const skillPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Hydration state for localStorage
   const [isMounted, setIsMounted] = useState(false);
@@ -772,8 +791,8 @@ export default function DocEngineFrontend() {
           DocEngine
         </div>
         <nav className="flex space-x-1 text-sm font-medium bg-[#F1EBE0] p-1 rounded-xl">
-          {(['tasks', 'create', 'storage', 'settings'] as const).map((tab) => {
-            const labels = { tasks: 'Tasks', create: 'Create', storage: 'Storage (R2)', settings: 'Settings' };
+          {(['tasks', 'create', 'skill', 'storage', 'settings'] as const).map((tab) => {
+            const labels = { tasks: 'Tasks', create: 'Create', skill: 'Skill', storage: 'Storage (R2)', settings: 'Settings' };
             return (
               <button
                 key={tab}
@@ -1461,6 +1480,363 @@ export default function DocEngineFrontend() {
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {/* ==================== SKILL GENERATOR TAB ==================== */}
+        {activeTab === 'skill' && (
+          <div className="bg-white rounded-[2rem] p-8 custom-shadow stacked-card relative border border-gray-100/50">
+            <h1 className="text-3xl font-bold text-gray-900 mb-2 tracking-tight">Generate Skill</h1>
+            <p className="text-sm text-gray-500 mb-8">Transform cleaned documentation into an Antigravity-compatible SKILL.md with references.</p>
+
+            <div className="space-y-6">
+              {/* === 認證模式選擇器 === */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-3">Authentication</label>
+                <div className="flex space-x-3 mb-4">
+                  <button
+                    onClick={() => setSkillAuthMode('oauth')}
+                    className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all border ${
+                      skillAuthMode === 'oauth'
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800 shadow-sm'
+                        : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
+                    }`}
+                  >
+                    🔐 Sign in with ChatGPT
+                  </button>
+                  <button
+                    onClick={() => setSkillAuthMode('apikey')}
+                    className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all border ${
+                      skillAuthMode === 'apikey'
+                        ? 'bg-amber-50 border-amber-200 text-amber-800 shadow-sm'
+                        : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
+                    }`}
+                  >
+                    🔑 Use API Key
+                  </button>
+                </div>
+
+                {/* OAuth 模式 */}
+                {skillAuthMode === 'oauth' && (
+                  <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-4">
+                    {codexAuth ? (
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2">
+                          <span className="inline-block w-2 h-2 bg-emerald-500 rounded-full" />
+                          <span className="text-sm text-emerald-700 font-medium">Connected to ChatGPT</span>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setCodexAuth(null);
+                            import('@/lib/oauth/codex').then(m => m.clearAuthState());
+                          }}
+                          className="text-xs text-gray-500 hover:text-red-500 transition-colors"
+                        >
+                          Disconnect
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={async () => {
+                          try {
+                            const { startOAuthFlow } = await import('@/lib/oauth/codex');
+                            const redirectUri = `${window.location.origin}/oauth/callback`;
+                            startOAuthFlow(redirectUri);
+
+                            // 監聽 popup 回傳的 message
+                            const handler = (event: MessageEvent) => {
+                              if (event.origin !== window.location.origin) return;
+                              if (event.data?.type === 'CODEX_OAUTH_SUCCESS') {
+                                setCodexAuth(event.data.auth);
+                                setSkillError('');
+                                window.removeEventListener('message', handler);
+                              } else if (event.data?.type === 'CODEX_OAUTH_ERROR') {
+                                setSkillError(`OAuth failed: ${event.data.error}`);
+                                window.removeEventListener('message', handler);
+                              }
+                            };
+                            window.addEventListener('message', handler);
+                          } catch (err: unknown) {
+                            setSkillError(err instanceof Error ? err.message : 'OAuth error');
+                          }
+                        }}
+                        className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium transition-colors"
+                      >
+                        Sign in with ChatGPT →
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* API Key 模式 */}
+                {skillAuthMode === 'apikey' && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">API Key</label>
+                      <input
+                        type="password"
+                        value={skillApiKey}
+                        onChange={(e) => setSkillApiKey(e.target.value)}
+                        placeholder="sk-... or your API key"
+                        className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">Base URL</label>
+                        <input
+                          type="text"
+                          value={skillBaseUrl}
+                          onChange={(e) => setSkillBaseUrl(e.target.value)}
+                          placeholder="https://api.openai.com/v1"
+                          className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">Model</label>
+                        <input
+                          type="text"
+                          value={skillModel}
+                          onChange={(e) => setSkillModel(e.target.value)}
+                          placeholder="gpt-4o"
+                          className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* === 資料夾選擇器 === */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-semibold text-gray-700">Cleaned Folder</label>
+                  <button
+                    onClick={async () => {
+                      setIsFoldersLoading(true);
+                      try {
+                        const res = await fetch('/api/list-cleaned-folders', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName,
+                          }),
+                        });
+                        const data = await res.json();
+                        if (data.folders) setAvailableFolders(data.folders);
+                      } catch (err: unknown) {
+                        setSkillError(err instanceof Error ? err.message : 'Failed to load folders');
+                      } finally {
+                        setIsFoldersLoading(false);
+                      }
+                    }}
+                    className="text-xs text-amber-700 hover:text-amber-900 font-medium transition-colors"
+                    disabled={isFoldersLoading}
+                  >
+                    {isFoldersLoading ? 'Loading...' : '↻ Refresh'}
+                  </button>
+                </div>
+                <select
+                  value={selectedFolder}
+                  onChange={(e) => setSelectedFolder(e.target.value)}
+                  className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
+                >
+                  <option value="">Select a cleaned folder...</option>
+                  {availableFolders.map((f) => (
+                    <option key={f.prefix} value={`${f.date}|${f.domain}`}>
+                      {f.domain} ({f.date}) — {f.fileCount} files
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* === 自訂 Prompt（可收合） === */}
+              <div>
+                <button
+                  onClick={() => setShowSkillPrompt(!showSkillPrompt)}
+                  className="text-sm text-gray-500 hover:text-gray-700 font-medium flex items-center space-x-1 transition-colors"
+                >
+                  <span>{showSkillPrompt ? '▾' : '▸'}</span>
+                  <span>Custom Generation Prompt</span>
+                </button>
+                {showSkillPrompt && (
+                  <textarea
+                    value={skillCustomPrompt}
+                    onChange={(e) => setSkillCustomPrompt(e.target.value)}
+                    placeholder="Optional: Add additional instructions for the LLM when generating the SKILL.md..."
+                    rows={4}
+                    className="mt-2 w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-3 border border-gray-200 focus:border-amber-300 focus:outline-none resize-none"
+                  />
+                )}
+              </div>
+
+              {/* === 生成按鈕 === */}
+              <button
+                onClick={async () => {
+                  if (!selectedFolder) {
+                    setSkillError('Please select a cleaned folder');
+                    return;
+                  }
+                  if (skillAuthMode === 'apikey' && !skillApiKey) {
+                    setSkillError('Please enter an API key');
+                    return;
+                  }
+                  if (skillAuthMode === 'oauth' && !codexAuth) {
+                    setSkillError('Please sign in with ChatGPT first');
+                    return;
+                  }
+
+                  setSkillError('');
+                  setIsSkillSubmitting(true);
+                  setSkillStatus(null);
+
+                  try {
+                    const [date, domain] = selectedFolder.split('|');
+                    const res = await fetch('/api/generate-skill', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        date,
+                        domain,
+                        authMode: skillAuthMode,
+                        accessToken: codexAuth?.accessToken,
+                        apiKey: skillApiKey,
+                        baseUrl: skillBaseUrl,
+                        model: skillModel,
+                        customPrompt: skillCustomPrompt || undefined,
+                        r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName,
+                      }),
+                    });
+
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || 'Failed to submit');
+
+                    setSkillTaskId(data.taskId);
+
+                    // 開始輪詢狀態
+                    if (skillPollRef.current) clearInterval(skillPollRef.current);
+                    skillPollRef.current = setInterval(async () => {
+                      try {
+                        const statusRes = await fetch(`/api/skill-status/${data.taskId}`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName }),
+                        });
+                        const statusData = await statusRes.json();
+                        setSkillStatus(statusData);
+
+                        if (statusData.status === 'completed' || statusData.status === 'failed') {
+                          if (skillPollRef.current) clearInterval(skillPollRef.current);
+                        }
+                      } catch { /* 忽略輪詢錯誤 */ }
+                    }, 3000);
+                  } catch (err: unknown) {
+                    setSkillError(err instanceof Error ? err.message : 'Unknown error');
+                  } finally {
+                    setIsSkillSubmitting(false);
+                  }
+                }}
+                disabled={isSkillSubmitting || !selectedFolder}
+                className="w-full py-3 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-sm font-semibold transition-all shadow-lg shadow-violet-200/50"
+              >
+                {isSkillSubmitting ? '⏳ Submitting...' : '✨ Generate Skill'}
+              </button>
+
+              {/* === 錯誤訊息 === */}
+              {skillError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">
+                  {skillError}
+                </div>
+              )}
+
+              {/* === 進度面板 === */}
+              {skillStatus && (
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-gray-700">Generation Progress</span>
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                      skillStatus.status === 'completed' ? 'bg-green-100 text-green-700'
+                      : skillStatus.status === 'failed' ? 'bg-red-100 text-red-700'
+                      : 'bg-yellow-100 text-yellow-700'
+                    }`}>
+                      {skillStatus.status}
+                    </span>
+                  </div>
+
+                  {/* 三步進度指示器 */}
+                  <div className="flex items-center space-x-2 text-xs">
+                    {['summarize', 'generate', 'refine', 'writing'].map((step, i) => {
+                      const phases = ['summarize', 'generate', 'refine', 'writing', 'done'];
+                      const currentIdx = phases.indexOf(skillStatus.phase);
+                      const stepIdx = phases.indexOf(step);
+                      const isDone = stepIdx < currentIdx;
+                      const isCurrent = stepIdx === currentIdx;
+                      return (
+                        <React.Fragment key={step}>
+                          {i > 0 && <div className={`flex-1 h-0.5 ${isDone ? 'bg-violet-400' : 'bg-gray-200'}`} />}
+                          <div className={`px-2 py-1 rounded-lg font-medium ${
+                            isDone ? 'bg-violet-100 text-violet-700'
+                            : isCurrent ? 'bg-violet-500 text-white animate-pulse'
+                            : 'bg-gray-100 text-gray-400'
+                          }`}>
+                            {step.charAt(0).toUpperCase() + step.slice(1)}
+                          </div>
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+
+                  {skillStatus.error && (
+                    <div className="text-sm text-red-600 bg-red-50 rounded-lg p-3">{skillStatus.error}</div>
+                  )}
+
+                  {/* 預覽區域 */}
+                  {skillStatus.skillPreview && (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">SKILL.md Preview</span>
+                        <span className="text-xs text-gray-400">{skillStatus.fileCount} reference files</span>
+                      </div>
+                      <pre className="bg-white border border-gray-200 rounded-xl p-4 text-xs text-gray-700 overflow-auto max-h-96 whitespace-pre-wrap font-mono">
+                        {skillStatus.skillPreview}
+                      </pre>
+                    </div>
+                  )}
+
+                  {/* 下載按鈕 */}
+                  {skillStatus.status === 'completed' && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          const res = await fetch('/api/skill-download', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              date: skillStatus.date,
+                              domain: skillStatus.domain,
+                              r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName,
+                            }),
+                          });
+                          if (!res.ok) throw new Error('Download failed');
+                          const blob = await res.blob();
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `${skillStatus.domain}-skill.zip`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        } catch (err: unknown) {
+                          setSkillError(err instanceof Error ? err.message : 'Download error');
+                        }
+                      }}
+                      className="w-full py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-xl text-sm font-semibold transition-all"
+                    >
+                      📦 Download Skill (.zip)
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
