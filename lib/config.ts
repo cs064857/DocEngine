@@ -15,9 +15,12 @@ export const config = {
       model: process.env.CONTENT_CLEANER_MODEL || 'glm-4-flash',
     },
     skillGenerator: {
-      baseUrl: process.env.SKILL_GENERATOR_BASE_URL || 'https://api.openai.com/v1',
+      provider: process.env.SKILL_GENERATOR_PROVIDER || 'openai',
+      modelId: process.env.SKILL_GENERATOR_MODEL_ID || 'gpt-4o',
       apiKey: process.env.SKILL_GENERATOR_API_KEY || '',
-      model: process.env.SKILL_GENERATOR_MODEL || 'gpt-4o',
+      authJsonPath: process.env.PI_AUTH_JSON_PATH || './auth.json',
+      // Backward compatibility / Custom URLs
+      baseUrl: process.env.SKILL_GENERATOR_BASE_URL || '',
     },
   },
   r2: {

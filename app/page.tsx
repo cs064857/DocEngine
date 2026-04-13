@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { checkCrawlJob, startCrawlJob } from '@/lib/services/crawler';
 import { downloadSingleFile, downloadFolderAsZip } from '@/lib/utils/download';
 import { buildR2Key } from '@/lib/utils/helpers';
-import type { CodexAuthState } from '@/lib/oauth/codex';
+
 import type { SkillTaskStatus } from '@/app/api/generate-skill/route';
 
 // Defines the shape of standard Crawl Task metrics
@@ -154,7 +154,8 @@ export default function DocEngineFrontend() {
 
   // ====== Skill Generator State ======
   const [skillAuthMode, setSkillAuthMode] = useState<'oauth' | 'apikey'>('apikey');
-  const [codexAuth, setCodexAuth] = useState<CodexAuthState | null>(null);
+  const [codexAuth, setCodexAuth] = useState<{ loggedIn: boolean; expires?: number } | null>(null);
+  const [skillProvider, setSkillProvider] = useState('openai');
   const [skillApiKey, setSkillApiKey] = useState('');
   const [skillBaseUrl, setSkillBaseUrl] = useState('https://api.openai.com/v1');
   const [skillModel, setSkillModel] = useState('gpt-4o');
@@ -1519,51 +1520,40 @@ export default function DocEngineFrontend() {
                 {/* OAuth 模式 */}
                 {skillAuthMode === 'oauth' && (
                   <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-4">
-                    {codexAuth ? (
+                    {codexAuth?.loggedIn ? (
                       <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-2">
                           <span className="inline-block w-2 h-2 bg-emerald-500 rounded-full" />
-                          <span className="text-sm text-emerald-700 font-medium">Connected to ChatGPT</span>
+                          <span className="text-sm text-emerald-700 font-medium">Connected to ChatGPT (Codex)</span>
                         </div>
-                        <button
-                          onClick={() => {
-                            setCodexAuth(null);
-                            import('@/lib/oauth/codex').then(m => m.clearAuthState());
-                          }}
-                          className="text-xs text-gray-500 hover:text-red-500 transition-colors"
-                        >
-                          Disconnect
-                        </button>
                       </div>
                     ) : (
-                      <button
-                        onClick={async () => {
-                          try {
-                            const { startOAuthFlow } = await import('@/lib/oauth/codex');
-                            const redirectUri = `${window.location.origin}/oauth/callback`;
-                            startOAuthFlow(redirectUri);
-
-                            // 監聽 popup 回傳的 message
-                            const handler = (event: MessageEvent) => {
-                              if (event.origin !== window.location.origin) return;
-                              if (event.data?.type === 'CODEX_OAUTH_SUCCESS') {
-                                setCodexAuth(event.data.auth);
-                                setSkillError('');
-                                window.removeEventListener('message', handler);
-                              } else if (event.data?.type === 'CODEX_OAUTH_ERROR') {
-                                setSkillError(`OAuth failed: ${event.data.error}`);
-                                window.removeEventListener('message', handler);
+                      <div className="text-sm text-emerald-800">
+                        <p className="mb-2 font-semibold">⚠️ 未偵測到授權狀態</p>
+                        <p>系統將無法自動打通 OpenAI，請確認：</p>
+                        <ol className="list-decimal ml-4 mt-2 space-y-1 mb-3 text-xs opacity-90">
+                          <li>在伺服器端執行 <code className="bg-white/50 px-1 rounded">npx @mariozechner/pi-ai login openai-codex</code></li>
+                          <li>將產生的 <code>auth.json</code> 掛載至 <code>PI_AUTH_JSON_PATH</code> 路徑。</li>
+                        </ol>
+                        <button
+                          onClick={async () => {
+                            setSkillError('');
+                            try {
+                              const res = await fetch('/api/codex-auth');
+                              if (res.ok) {
+                                const data = await res.json();
+                                setCodexAuth(data);
+                                if (!data.loggedIn) setSkillError('尚未偵測到有效憑證，請確保 auth.json 已正確掛載。');
                               }
-                            };
-                            window.addEventListener('message', handler);
-                          } catch (err: unknown) {
-                            setSkillError(err instanceof Error ? err.message : 'OAuth error');
-                          }
-                        }}
-                        className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium transition-colors"
-                      >
-                        Sign in with ChatGPT →
-                      </button>
+                            } catch (err: any) {
+                              setSkillError(err.message);
+                            }
+                          }}
+                          className="mt-1 w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium transition-colors cursor-pointer"
+                        >
+                          ↻ 重新檢查授權狀態
+                        </button>
+                      </div>
                     )}
                   </div>
                 )}
@@ -1571,26 +1561,24 @@ export default function DocEngineFrontend() {
                 {/* API Key 模式 */}
                 {skillAuthMode === 'apikey' && (
                   <div className="space-y-3">
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">API Key</label>
-                      <input
-                        type="password"
-                        value={skillApiKey}
-                        onChange={(e) => setSkillApiKey(e.target.value)}
-                        placeholder="sk-... or your API key"
-                        className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
-                      />
-                    </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">Base URL</label>
-                        <input
-                          type="text"
-                          value={skillBaseUrl}
-                          onChange={(e) => setSkillBaseUrl(e.target.value)}
-                          placeholder="https://api.openai.com/v1"
+                        <label className="block text-xs text-gray-500 mb-1">Provider</label>
+                        <select
+                          value={skillProvider}
+                          onChange={(e) => {
+                            setSkillProvider(e.target.value);
+                            if (e.target.value === 'openai') setSkillModel('gpt-4o');
+                            if (e.target.value === 'anthropic') setSkillModel('claude-3-5-sonnet-20241022');
+                            if (e.target.value === 'google') setSkillModel('gemini-2.5-pro');
+                          }}
                           className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
-                        />
+                        >
+                          <option value="openai">OpenAI</option>
+                          <option value="anthropic">Anthropic</option>
+                          <option value="google">Google</option>
+                          <option value="openrouter">OpenRouter</option>
+                        </select>
                       </div>
                       <div>
                         <label className="block text-xs text-gray-500 mb-1">Model</label>
@@ -1602,6 +1590,26 @@ export default function DocEngineFrontend() {
                           className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
                         />
                       </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">API Key</label>
+                      <input
+                        type="password"
+                        value={skillApiKey}
+                        onChange={(e) => setSkillApiKey(e.target.value)}
+                        placeholder="sk-... or your API key"
+                        className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Base URL (Optional)</label>
+                      <input
+                        type="text"
+                        value={skillBaseUrl}
+                        onChange={(e) => setSkillBaseUrl(e.target.value)}
+                        placeholder=""
+                        className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
+                      />
                     </div>
                   </div>
                 )}
@@ -1692,17 +1700,17 @@ export default function DocEngineFrontend() {
 
                   try {
                     const [date, domain] = selectedFolder.split('|');
+                    const isOAuth = skillAuthMode === 'oauth';
                     const res = await fetch('/api/generate-skill', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
                         date,
                         domain,
-                        authMode: skillAuthMode,
-                        accessToken: codexAuth?.accessToken,
-                        apiKey: skillApiKey,
-                        baseUrl: skillBaseUrl,
-                        model: skillModel,
+                        provider: isOAuth ? 'openai-codex' : skillProvider,
+                        modelId: isOAuth ? 'gpt-4o' : skillModel,
+                        apiKey: isOAuth ? undefined : skillApiKey,
+                        baseUrl: isOAuth ? undefined : (skillBaseUrl || undefined),
                         customPrompt: skillCustomPrompt || undefined,
                         r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName,
                       }),

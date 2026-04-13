@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { send } from '@vercel/queue';
-import { listObjects, putObject } from '@/lib/r2';
+import { listObjects, putObject, getObject } from '@/lib/r2';
 import type { R2Overrides } from '@/lib/r2';
 import { generateTaskId } from '@/lib/utils/helpers';
+import { generateSkill } from '@/lib/processors/skill-generator';
+import { config } from '@/lib/config';
 
-/**
- * Skill 生成任務的 R2 狀態結構
- */
 export interface SkillTaskStatus {
   taskId: string;
   status: 'processing' | 'completed' | 'failed';
@@ -20,18 +18,14 @@ export interface SkillTaskStatus {
   updatedAt: string;
 }
 
-/**
- * Queue Payload 結構
- */
 export interface SkillJobPayload {
   taskId: string;
   date: string;
   domain: string;
-  authMode: 'oauth' | 'apikey';
-  accessToken?: string;
+  provider?: string;
+  modelId?: string;
   apiKey?: string;
   baseUrl?: string;
-  model?: string;
   customPrompt?: string;
   r2AccountId?: string;
   r2AccessKeyId?: string;
@@ -39,48 +33,131 @@ export interface SkillJobPayload {
   r2BucketName?: string;
 }
 
-// 從前端參數提取 R2 覆蓋配置
-function extractR2Overrides(body: Record<string, string | undefined>): R2Overrides | undefined {
-  if (!body.r2AccountId && !body.r2AccessKeyId && !body.r2SecretAccessKey) return undefined;
+function extractR2Overrides(payload: Record<string, string | undefined>): R2Overrides | undefined {
+  if (!payload.r2AccountId && !payload.r2AccessKeyId && !payload.r2SecretAccessKey) return undefined;
   return {
-    accountId: body.r2AccountId,
-    accessKeyId: body.r2AccessKeyId,
-    secretAccessKey: body.r2SecretAccessKey,
-    bucketName: body.r2BucketName,
+    accountId: payload.r2AccountId,
+    accessKeyId: payload.r2AccessKeyId,
+    secretAccessKey: payload.r2SecretAccessKey,
+    bucketName: payload.r2BucketName,
   };
+}
+
+async function updateSkillTaskStatus(
+  taskId: string,
+  updates: Partial<SkillTaskStatus>,
+  r2?: R2Overrides
+) {
+  try {
+    const raw = await getObject(`skill-tasks/${taskId}.json`, r2);
+    const current: SkillTaskStatus = JSON.parse(raw);
+
+    const updated: SkillTaskStatus = {
+      ...current,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await putObject(
+      `skill-tasks/${taskId}.json`,
+      JSON.stringify(updated, null, 2),
+      'application/json',
+      r2
+    );
+  } catch (error) {
+    console.error(`[Skill Worker] Failed to update task status for ${taskId}:`, error);
+  }
+}
+
+/**
+ * 非阻塞異步任務處理 (Fire-and-Forget for Docker)
+ */
+async function processSkillGeneration(payload: SkillJobPayload) {
+  const { taskId, date, domain, customPrompt, provider, modelId, apiKey, baseUrl } = payload;
+  const r2 = extractR2Overrides(payload as any);
+
+  console.log(`[Skill Worker] Processing task ${taskId}: ${domain} (${date})`);
+
+  try {
+    const result = await generateSkill({
+      date,
+      domain,
+      provider: provider || config.llm.skillGenerator.provider,
+      modelId: modelId || config.llm.skillGenerator.modelId,
+      apiKey: apiKey,
+      baseUrl: baseUrl,
+      r2,
+      customPrompt,
+      onProgress: async (phase, detail) => {
+        console.log(`[Skill Worker] Task ${taskId} - ${phase}: ${detail}`);
+        await updateSkillTaskStatus(taskId, {
+          phase: phase as SkillTaskStatus['phase'],
+        }, r2);
+      },
+    });
+
+    // === 寫入 R2 ===
+    await updateSkillTaskStatus(taskId, { phase: 'writing' }, r2);
+
+    const skillPrefix = `skills/${date}/${domain}`;
+
+    // 寫入 SKILL.md
+    await putObject(
+      `${skillPrefix}/SKILL.md`,
+      result.skillMd,
+      'text/markdown',
+      r2
+    );
+    console.log(`[Skill Worker] Written SKILL.md to ${skillPrefix}/SKILL.md`);
+
+    // 複製 cleaned 文件到 references/
+    const copyPromises = result.fileList.map(async (filename) => {
+      try {
+        const sourceKey = `cleaned/${date}/${domain}/${filename}`;
+        const content = await getObject(sourceKey, r2);
+        const destKey = `${skillPrefix}/references/${filename}`;
+        await putObject(destKey, content, 'text/markdown', r2);
+      } catch (err) {
+        console.warn(`[Skill Worker] Failed to copy file ${filename}:`, err);
+      }
+    });
+
+    await Promise.all(copyPromises);
+    console.log(`[Skill Worker] Copied ${result.fileList.length} files to references/`);
+
+    // 更新任務狀態為完成
+    await updateSkillTaskStatus(taskId, {
+      status: 'completed',
+      phase: 'done',
+      fileCount: result.fileList.length,
+      skillPreview: result.skillMd.slice(0, 2000), // 前 2000 字作為預覽
+    }, r2);
+
+    console.log(`[Skill Worker] Task ${taskId} completed successfully`);
+  } catch (error: unknown) {
+    console.error(`[Skill Worker] Task ${taskId} failed:`, error);
+    const errMsg = error instanceof Error ? error.message : 'Unknown error';
+
+    await updateSkillTaskStatus(taskId, {
+      status: 'failed',
+      error: errMsg,
+    }, r2);
+  }
 }
 
 /**
  * POST /api/generate-skill
- *
- * 提交 Skill 生成任務：
- * 1. 驗證參數
- * 2. 確認 cleaned 資料夾存在
- * 3. 建立任務狀態寫入 R2
- * 4. 發送至 Queue
- * 5. 返回 taskId
  */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { date, domain, authMode, accessToken, apiKey, baseUrl, model, customPrompt } = body;
+    const { date, domain, provider, modelId, apiKey, baseUrl, customPrompt } = body;
 
-    // 驗證必要參數
     if (!date || !domain) {
       return NextResponse.json({ error: 'Missing required fields: date, domain' }, { status: 400 });
     }
 
-    if (authMode === 'oauth' && !accessToken) {
-      return NextResponse.json({ error: 'OAuth mode requires accessToken' }, { status: 400 });
-    }
-
-    if (authMode === 'apikey' && !apiKey) {
-      return NextResponse.json({ error: 'API Key mode requires apiKey' }, { status: 400 });
-    }
-
     const r2 = extractR2Overrides(body);
-
-    // 確認 cleaned 資料夾存在且有檔案
     const prefix = `cleaned/${date}/${domain}/`;
     const objects = await listObjects(prefix, 5, r2);
 
@@ -91,7 +168,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 建立 task 狀態
     const taskId = generateTaskId();
     const now = new Date().toISOString();
 
@@ -101,12 +177,11 @@ export async function POST(req: NextRequest) {
       phase: 'queued',
       date,
       domain,
-      fileCount: 0, // 實際值在 Worker 中更新
+      fileCount: 0,
       createdAt: now,
       updatedAt: now,
     };
 
-    // 寫入 R2
     await putObject(
       `skill-tasks/${taskId}.json`,
       JSON.stringify(taskStatus, null, 2),
@@ -114,16 +189,14 @@ export async function POST(req: NextRequest) {
       r2
     );
 
-    // 建立 Queue Payload
     const payload: SkillJobPayload = {
       taskId,
       date,
       domain,
-      authMode: authMode || 'apikey',
-      accessToken,
+      provider,
+      modelId,
       apiKey,
       baseUrl,
-      model,
       customPrompt,
       r2AccountId: body.r2AccountId,
       r2AccessKeyId: body.r2AccessKeyId,
@@ -131,14 +204,14 @@ export async function POST(req: NextRequest) {
       r2BucketName: body.r2BucketName,
     };
 
-    // 發送至 Queue
-    await send('generate-skill', payload);
+    // Fire-and-Forget async 執行
+    processSkillGeneration(payload).catch(console.error);
 
-    console.log(`[Generate Skill] Task ${taskId} queued for ${domain} (${date})`);
+    console.log(`[Generate Skill] Task ${taskId} started asynchronously for ${domain} (${date})`);
 
     return NextResponse.json({
       taskId,
-      message: 'Skill generation task queued successfully',
+      message: 'Skill generation task started successfully',
     });
   } catch (error: unknown) {
     console.error('[Generate Skill] Error:', error);

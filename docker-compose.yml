@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  crawldocs:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # 掛載包含 auth.json 的目錄，供 pi-mono 使用 Codex OAuth
+      - ./auth-data:/app/auth-data
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PI_AUTH_JSON_PATH=/app/auth-data/auth.json
+
+# 如果你需要跑在背景，請使用： docker-compose up -d
