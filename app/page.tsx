@@ -7,6 +7,26 @@ import { buildR2Key } from '@/lib/utils/helpers';
 
 import type { SkillTaskStatus } from '@/app/api/generate-skill/route';
 
+// pi-ai Provider/Model Registry（由 /api/pi-models 提供）
+interface PiModelInfo {
+  id: string;
+  name: string;
+  api: string;
+  baseUrl: string;
+  reasoning: boolean;
+  input: string[];
+  contextWindow: number;
+  maxTokens: number;
+}
+
+interface PiProviderInfo {
+  id: string;
+  apis: string[];
+  supportsCustomModel: boolean;
+  modelCount: number;
+  models: PiModelInfo[];
+}
+
 // Defines the shape of standard Crawl Task metrics
 interface JobTask {
   taskId: string;
@@ -157,8 +177,15 @@ export default function DocEngineFrontend() {
   const [codexAuth, setCodexAuth] = useState<{ loggedIn: boolean; expires?: number } | null>(null);
   const [skillProvider, setSkillProvider] = useState('openai');
   const [skillApiKey, setSkillApiKey] = useState('');
-  const [skillBaseUrl, setSkillBaseUrl] = useState('https://api.openai.com/v1');
+  // 空字串代表不覆蓋，使用 pi-ai registry 內建的 baseUrl
+  const [skillBaseUrl, setSkillBaseUrl] = useState('');
   const [skillModel, setSkillModel] = useState('gpt-4o');
+  const [skillUseCustomModel, setSkillUseCustomModel] = useState(false);
+  const [skillCustomModelId, setSkillCustomModelId] = useState('');
+
+  const [piProviders, setPiProviders] = useState<PiProviderInfo[]>([]);
+  const [isPiProvidersLoading, setIsPiProvidersLoading] = useState(false);
+  const [piProvidersError, setPiProvidersError] = useState('');
   const [availableFolders, setAvailableFolders] = useState<{ date: string; domain: string; prefix: string; fileCount: number }[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<string>('');
   const [skillCustomPrompt, setSkillCustomPrompt] = useState('');
@@ -172,6 +199,11 @@ export default function DocEngineFrontend() {
 
   // Hydration state for localStorage
   const [isMounted, setIsMounted] = useState(false);
+
+  // === Skill Generator 的 Provider/Model 快取 ===
+  const selectedSkillProviderInfo = piProviders.find((p) => p.id === skillProvider);
+  const selectedSkillProviderModels = selectedSkillProviderInfo?.models || [];
+  const selectedSkillModelInfo = selectedSkillProviderModels.find((m) => m.id === skillModel);
 
   // Load configuration from localStorage on mount
   useEffect(() => {
@@ -203,6 +235,66 @@ export default function DocEngineFrontend() {
         console.error("Failed to parse config from localStorage", e);
       }
     }
+  }, []);
+
+  // registry 載入後，確保目前選擇的 provider / model 存在
+  useEffect(() => {
+    if (!piProviders || piProviders.length === 0) return;
+
+    const providerInfo =
+      piProviders.find((p) => p.id === skillProvider) ||
+      piProviders.find((p) => p.id === 'openai') ||
+      piProviders[0];
+
+    if (!providerInfo) return;
+
+    if (providerInfo.id !== skillProvider) {
+      setSkillProvider(providerInfo.id);
+      setSkillUseCustomModel(false);
+      setSkillCustomModelId('');
+      setSkillBaseUrl('');
+    }
+
+    const modelIds = new Set(providerInfo.models.map((m) => m.id));
+    if (!modelIds.has(skillModel)) {
+      const fallbackModel = providerInfo.models[0]?.id || '';
+      setSkillModel(fallbackModel);
+      setSkillUseCustomModel(false);
+      setSkillCustomModelId('');
+      setSkillBaseUrl('');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [piProviders]);
+
+  // 載入 pi-ai 內建的 Provider / Model registry（用於 Skill Generator 下拉選單）
+  useEffect(() => {
+    let ignore = false;
+
+    const loadPiModels = async () => {
+      setIsPiProvidersLoading(true);
+      setPiProvidersError('');
+      try {
+        const res = await fetch('/api/pi-models');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to load pi-ai models');
+
+        const providers = (data.providers || []) as PiProviderInfo[];
+        if (!ignore) {
+          setPiProviders(providers);
+        }
+      } catch (e: unknown) {
+        if (!ignore) {
+          setPiProvidersError(e instanceof Error ? e.message : 'Failed to load pi-ai models');
+        }
+      } finally {
+        if (!ignore) setIsPiProvidersLoading(false);
+      }
+    };
+
+    loadPiModels();
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   // Save configuration to localStorage on change
@@ -1568,28 +1660,79 @@ export default function DocEngineFrontend() {
                         <select
                           value={skillProvider}
                           onChange={(e) => {
-                            setSkillProvider(e.target.value);
-                            if (e.target.value === 'openai') setSkillModel('gpt-4o');
-                            if (e.target.value === 'anthropic') setSkillModel('claude-3-5-sonnet-20241022');
-                            if (e.target.value === 'google') setSkillModel('gemini-2.5-pro');
+                            const nextProvider = e.target.value;
+                            setSkillProvider(nextProvider);
+                            setSkillUseCustomModel(false);
+                            setSkillCustomModelId('');
+                            setSkillBaseUrl('');
+
+                            const providerInfo = piProviders.find((p) => p.id === nextProvider);
+                            const firstModel = providerInfo?.models?.[0]?.id;
+                            if (firstModel) setSkillModel(firstModel);
                           }}
                           className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
+                          disabled={isPiProvidersLoading || piProviders.length === 0}
                         >
-                          <option value="openai">OpenAI</option>
-                          <option value="anthropic">Anthropic</option>
-                          <option value="google">Google</option>
-                          <option value="openrouter">OpenRouter</option>
+                          {piProviders.length === 0 ? (
+                            <option value={skillProvider}>
+                              {isPiProvidersLoading ? 'Loading providers...' : 'No providers loaded'}
+                            </option>
+                          ) : (
+                            piProviders.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.id} ({p.modelCount})
+                              </option>
+                            ))
+                          )}
                         </select>
+                        {piProvidersError && (
+                          <div className="mt-1 text-xs text-red-600">{piProvidersError}</div>
+                        )}
                       </div>
                       <div>
                         <label className="block text-xs text-gray-500 mb-1">Model</label>
-                        <input
-                          type="text"
-                          value={skillModel}
-                          onChange={(e) => setSkillModel(e.target.value)}
-                          placeholder="gpt-4o"
-                          className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
-                        />
+                        {selectedSkillProviderInfo?.supportsCustomModel && (
+                          <label className="flex items-center gap-2 mb-1 text-[11px] text-gray-600 select-none">
+                            <input
+                              type="checkbox"
+                              checked={skillUseCustomModel}
+                              onChange={(e) => {
+                                const next = e.target.checked;
+                                setSkillUseCustomModel(next);
+                                setSkillCustomModelId(next ? skillModel : '');
+                              }}
+                              className="w-3.5 h-3.5 rounded border-gray-300 text-violet-600 focus:ring-violet-500 accent-violet-600"
+                            />
+                            Use custom model ID
+                          </label>
+                        )}
+
+                        {skillUseCustomModel ? (
+                          <input
+                            type="text"
+                            value={skillCustomModelId}
+                            onChange={(e) => setSkillCustomModelId(e.target.value)}
+                            placeholder={skillModel || 'Enter model id...'}
+                            className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
+                          />
+                        ) : (
+                          <select
+                            value={skillModel}
+                            onChange={(e) => setSkillModel(e.target.value)}
+                            className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
+                            disabled={piProviders.length === 0 || selectedSkillProviderModels.length === 0}
+                          >
+                            {selectedSkillProviderModels.length === 0 ? (
+                              <option value={skillModel}>No models</option>
+                            ) : (
+                              selectedSkillProviderModels.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.name} ({m.id})
+                                </option>
+                              ))
+                            )}
+                          </select>
+                        )}
                       </div>
                     </div>
                     <div>
@@ -1608,9 +1751,12 @@ export default function DocEngineFrontend() {
                         type="text"
                         value={skillBaseUrl}
                         onChange={(e) => setSkillBaseUrl(e.target.value)}
-                        placeholder=""
+                        placeholder={selectedSkillModelInfo?.baseUrl || ''}
                         className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
                       />
+                      <div className="mt-1 text-[11px] text-gray-500">
+                        Leave blank to use the provider default.
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1690,6 +1836,10 @@ export default function DocEngineFrontend() {
                     setSkillError('Please enter an API key');
                     return;
                   }
+                  if (skillAuthMode === 'apikey' && skillUseCustomModel && !skillCustomModelId.trim()) {
+                    setSkillError('Please enter a custom model id');
+                    return;
+                  }
                   if (skillAuthMode === 'oauth' && !codexAuth) {
                     setSkillError('Please sign in with ChatGPT first');
                     return;
@@ -1709,9 +1859,9 @@ export default function DocEngineFrontend() {
                         date,
                         domain,
                         provider: isOAuth ? 'openai-codex' : skillProvider,
-                        modelId: isOAuth ? 'gpt-4o' : skillModel,
+                        modelId: isOAuth ? 'gpt-4o' : (skillUseCustomModel ? skillCustomModelId.trim() : skillModel),
                         apiKey: isOAuth ? undefined : skillApiKey,
-                        baseUrl: isOAuth ? undefined : (skillBaseUrl || undefined),
+                        baseUrl: isOAuth ? undefined : (skillBaseUrl.trim() || undefined),
                         customPrompt: skillCustomPrompt || undefined,
                         r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName,
                       }),

@@ -1,5 +1,19 @@
-import { getModel, complete, type AssistantMessage, type Context, type ProviderStreamOptions } from '@mariozechner/pi-ai';
+import {
+  complete,
+  getModels,
+  getProviders,
+  type Api,
+  type AssistantMessage,
+  type Context,
+  type KnownProvider,
+  type Model,
+  type ProviderStreamOptions,
+} from '@mariozechner/pi-ai';
 import { getCodexApiKey } from '@/lib/oauth/pi-auth';
+
+function isKnownProvider(value: string): value is KnownProvider {
+  return (getProviders() as readonly string[]).includes(value);
+}
 
 export interface PiCompleteParams {
   provider: string; // e.g. 'openai', 'openai-codex', 'anthropic', 'openrouter'
@@ -34,10 +48,26 @@ export async function piComplete(params: PiCompleteParams): Promise<{ text: stri
      console.warn(`[pi-llm] No API Key provided for provider ${provider}. API might fail if env vars aren't set.`);
   }
 
-  // 取得 pi-mono 註冊的 Model 執行實例
-  const model = getModel(provider as any, modelId);
+  if (!isKnownProvider(provider)) {
+    throw new Error(`Provider ${provider} is not supported by pi-ai registry`);
+  }
+
+  const providerModels = getModels(provider);
+  let model: Model<Api> | undefined = (providerModels as unknown as Model<Api>[]).find((m) => m.id === modelId);
+
+  // 若 modelId 不在 registry 中，且該 provider 只有單一 API 類型，允許建立「自訂 model」作為 fallback。
   if (!model) {
-    throw new Error(`Model ${modelId} not found for provider ${provider}`);
+    const apis = Array.from(new Set(providerModels.map((m) => m.api)));
+    if (providerModels.length > 0 && apis.length === 1) {
+      const template = providerModels[0] as unknown as Model<Api>;
+      model = {
+        ...template,
+        id: modelId,
+        name: modelId,
+      };
+    } else {
+      throw new Error(`Model ${modelId} not found for provider ${provider}`);
+    }
   }
 
   // pi-ai 以 model.baseUrl 決定送往哪個端點；options 不支援 baseUrl 覆蓋。
