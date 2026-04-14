@@ -1662,13 +1662,21 @@ export default function DocEngineFrontend() {
                           onChange={(e) => {
                             const nextProvider = e.target.value;
                             setSkillProvider(nextProvider);
-                            setSkillUseCustomModel(false);
-                            setSkillCustomModelId('');
-                            setSkillBaseUrl('');
 
                             const providerInfo = piProviders.find((p) => p.id === nextProvider);
                             const firstModel = providerInfo?.models?.[0]?.id;
                             if (firstModel) setSkillModel(firstModel);
+
+                            if (providerInfo?.id === 'openai-compatible') {
+                              // openai-compatible：預設走自訂 modelId + 可覆蓋 baseUrl
+                              setSkillUseCustomModel(true);
+                              setSkillCustomModelId('gpt-4o');
+                              setSkillBaseUrl(providerInfo.models?.[0]?.baseUrl || '');
+                            } else {
+                              setSkillUseCustomModel(false);
+                              setSkillCustomModelId('');
+                              setSkillBaseUrl('');
+                            }
                           }}
                           className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
                           disabled={isPiProvidersLoading || piProviders.length === 0}
@@ -1680,7 +1688,7 @@ export default function DocEngineFrontend() {
                           ) : (
                             piProviders.map((p) => (
                               <option key={p.id} value={p.id}>
-                                {p.id} ({p.modelCount})
+                                {p.id} ({p.modelCount}){p.supportsCustomModel ? ' - OpenAI-compatible' : ''}
                               </option>
                             ))
                           )}
@@ -1712,7 +1720,7 @@ export default function DocEngineFrontend() {
                             type="text"
                             value={skillCustomModelId}
                             onChange={(e) => setSkillCustomModelId(e.target.value)}
-                            placeholder={skillModel || 'Enter model id...'}
+                            placeholder="e.g. gpt-4o, glm-5.1"
                             className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
                           />
                         ) : (

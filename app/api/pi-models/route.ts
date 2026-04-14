@@ -29,8 +29,31 @@ export async function GET() {
   try {
     const providers = getProviders().slice().sort();
 
+    // 額外提供一個「通用 OpenAI-compatible（Chat Completions）」渠道
+    // 讓使用者可填入自訂 baseUrl + modelId，對接任何 OpenAI 相容端點（LiteLLM / Ollama / 自建 proxy 等）。
+    const openAICompatibleProvider: PiProviderInfo = {
+      id: 'openai-compatible',
+      apis: ['openai-completions'],
+      supportsCustomModel: true,
+      modelCount: 1,
+      models: [
+        {
+          id: 'custom',
+          name: 'Custom (OpenAI-compatible)',
+          api: 'openai-completions',
+          baseUrl: 'https://api.openai.com/v1',
+          reasoning: false,
+          input: ['text'],
+          contextWindow: 128000,
+          maxTokens: 32000,
+        },
+      ],
+    };
+
     const result: { providers: PiProviderInfo[] } = {
-      providers: providers.map((providerId) => {
+      providers: [
+        openAICompatibleProvider,
+        ...providers.map((providerId) => {
         const modelsRaw = getModels(providerId);
         const apis = Array.from(new Set(modelsRaw.map((m) => m.api))).sort();
 
@@ -56,6 +79,7 @@ export async function GET() {
           models,
         };
       }),
+      ],
     };
 
     return NextResponse.json(result);

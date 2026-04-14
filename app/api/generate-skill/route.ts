@@ -79,13 +79,23 @@ async function processSkillGeneration(payload: SkillJobPayload) {
   console.log(`[Skill Worker] Processing task ${taskId}: ${domain} (${date})`);
 
   try {
+    const resolvedProvider = provider || config.llm.skillGenerator.provider;
+    const resolvedModelId = modelId || config.llm.skillGenerator.modelId;
+
+    // 預設可用環境變數配置：SKILL_GENERATOR_API_KEY / SKILL_GENERATOR_BASE_URL
+    // 但若使用 openai-codex（OAuth），不要用預設 apiKey 覆蓋 OAuth token 流程。
+    const resolvedApiKey = apiKey || (resolvedProvider === 'openai-codex'
+      ? undefined
+      : (config.llm.skillGenerator.apiKey || undefined));
+    const resolvedBaseUrl = baseUrl || (config.llm.skillGenerator.baseUrl || undefined);
+
     const result = await generateSkill({
       date,
       domain,
-      provider: provider || config.llm.skillGenerator.provider,
-      modelId: modelId || config.llm.skillGenerator.modelId,
-      apiKey: apiKey,
-      baseUrl: baseUrl,
+      provider: resolvedProvider,
+      modelId: resolvedModelId,
+      apiKey: resolvedApiKey,
+      baseUrl: resolvedBaseUrl,
       r2,
       customPrompt,
       onProgress: async (phase, detail) => {

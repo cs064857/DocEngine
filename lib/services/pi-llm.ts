@@ -48,25 +48,44 @@ export async function piComplete(params: PiCompleteParams): Promise<{ text: stri
      console.warn(`[pi-llm] No API Key provided for provider ${provider}. API might fail if env vars aren't set.`);
   }
 
-  if (!isKnownProvider(provider)) {
-    throw new Error(`Provider ${provider} is not supported by pi-ai registry`);
-  }
+  let model: Model<Api> | undefined;
 
-  const providerModels = getModels(provider);
-  let model: Model<Api> | undefined = (providerModels as unknown as Model<Api>[]).find((m) => m.id === modelId);
+  // 通用 OpenAI-compatible（Chat Completions）渠道：允許任意 modelId + 自訂 baseUrl
+  if (provider === 'openai-compatible') {
+    const resolvedBaseUrl = (baseUrl || 'https://api.openai.com/v1').trim();
+    model = {
+      id: modelId,
+      name: modelId,
+      api: 'openai-completions',
+      provider: 'openai-compatible',
+      baseUrl: resolvedBaseUrl,
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 32000,
+    };
+  } else {
+    if (!isKnownProvider(provider)) {
+      throw new Error(`Provider ${provider} is not supported by pi-ai registry`);
+    }
 
-  // 若 modelId 不在 registry 中，且該 provider 只有單一 API 類型，允許建立「自訂 model」作為 fallback。
-  if (!model) {
-    const apis = Array.from(new Set(providerModels.map((m) => m.api)));
-    if (providerModels.length > 0 && apis.length === 1) {
-      const template = providerModels[0] as unknown as Model<Api>;
-      model = {
-        ...template,
-        id: modelId,
-        name: modelId,
-      };
-    } else {
-      throw new Error(`Model ${modelId} not found for provider ${provider}`);
+    const providerModels = getModels(provider);
+    model = (providerModels as unknown as Model<Api>[]).find((m) => m.id === modelId);
+
+    // 若 modelId 不在 registry 中，且該 provider 只有單一 API 類型，允許建立「自訂 model」作為 fallback。
+    if (!model) {
+      const apis = Array.from(new Set(providerModels.map((m) => m.api)));
+      if (providerModels.length > 0 && apis.length === 1) {
+        const template = providerModels[0] as unknown as Model<Api>;
+        model = {
+          ...template,
+          id: modelId,
+          name: modelId,
+        };
+      } else {
+        throw new Error(`Model ${modelId} not found for provider ${provider}`);
+      }
     }
   }
 
