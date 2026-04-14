@@ -248,8 +248,6 @@ export async function generateSkill(params: {
     temperature: 0.2,
   });
 
-  onProgress?.('refine', '校驗完成，SKILL.md 已就緒');
-
   const finalMarkdown = normalizeSkillMarkdown(finalSkillMd.text);
   if (!finalMarkdown || finalMarkdown.trim().length === 0) {
     throw new Error('LLM returned empty SKILL.md');
@@ -257,6 +255,8 @@ export async function generateSkill(params: {
   if (!finalMarkdown.trimStart().startsWith('---')) {
     throw new Error('Invalid SKILL.md: missing YAML frontmatter. Output must start with `---`.');
   }
+
+  onProgress?.('refine', '校驗完成，SKILL.md 已就緒');
 
   return {
     skillMd: finalMarkdown,

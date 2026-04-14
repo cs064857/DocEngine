@@ -1,4 +1,4 @@
-import { getModel, complete } from '@mariozechner/pi-ai';
+import { getModel, complete, type AssistantMessage, type Context, type ProviderStreamOptions } from '@mariozechner/pi-ai';
 import { getCodexApiKey } from '@/lib/oauth/pi-auth';
 
 export interface PiCompleteParams {
@@ -15,7 +15,7 @@ export interface PiCompleteParams {
 /**
  * 封裝 pi-mono 的 LLM 呼叫，處理 Token 動態刷新與提供者選擇
  */
-export async function piComplete(params: PiCompleteParams): Promise<{ text: string, usage?: any }> {
+export async function piComplete(params: PiCompleteParams): Promise<{ text: string; usage?: AssistantMessage['usage'] }> {
   const { provider, modelId, systemPrompt, userPrompt, temperature, maxTokens, baseUrl } = params;
 
   let finalApiKey = params.apiKey;
@@ -40,27 +40,31 @@ export async function piComplete(params: PiCompleteParams): Promise<{ text: stri
     throw new Error(`Model ${modelId} not found for provider ${provider}`);
   }
 
+  // pi-ai 以 model.baseUrl 決定送往哪個端點；options 不支援 baseUrl 覆蓋。
+  const modelWithOverrides = baseUrl ? { ...model, baseUrl } : model;
+
   // 若提供自訂 baseUrl，我們利用 provider 特性將其注入（Pi-mono 的 registerProvider 或修改 API base_url）
   // 注意：大部分情況 pi-mono 已內建完整 mapping。若真要自訂，可直接傳給 options
-  const completeOptions: any = {
+  const completeOptions: ProviderStreamOptions = {
     apiKey: finalApiKey,
     temperature: temperature ?? 0.7,
     maxTokens: maxTokens,
   };
 
-  if (baseUrl) {
-     completeOptions.baseUrl = baseUrl;
-  }
-
-  const context = {
+  const context: Context = {
     systemPrompt,
-    messages: [
-      { role: 'user', content: userPrompt, timestamp: Date.now() }
-    ] as any
+    messages: [{ role: 'user', content: userPrompt, timestamp: Date.now() }],
   };
 
   try {
-    const response = await complete(model, context, completeOptions);
+    const response: AssistantMessage = await complete(modelWithOverrides, context, completeOptions);
+
+    // pi-ai 在串流錯誤時會回傳 stopReason=error 的 AssistantMessage（不會 throw）
+    if (response.stopReason === 'error' || response.stopReason === 'aborted') {
+      throw new Error(
+        response.errorMessage || `LLM request failed (stopReason=${response.stopReason}, provider=${provider}, model=${modelId})`
+      );
+    }
     
     // 從回傳中提取文本內容
     let textOut = '';
@@ -68,6 +72,13 @@ export async function piComplete(params: PiCompleteParams): Promise<{ text: stri
       if (block.type === 'text') {
         textOut += block.text;
       }
+    }
+
+    if (textOut.trim().length === 0) {
+      const contentTypes = Array.from(new Set(response.content.map((b) => b.type))).join(',') || 'none';
+      throw new Error(
+        `LLM returned no text blocks (stopReason=${response.stopReason}, contentTypes=${contentTypes}, provider=${provider}, model=${modelId})`
+      );
     }
 
     return {
