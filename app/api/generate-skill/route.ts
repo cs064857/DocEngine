@@ -34,7 +34,7 @@ export interface SkillJobPayload {
 }
 
 function extractR2Overrides(payload: Record<string, string | undefined>): R2Overrides | undefined {
-  if (!payload.r2AccountId && !payload.r2AccessKeyId && !payload.r2SecretAccessKey) return undefined;
+  if (!payload.r2AccountId && !payload.r2AccessKeyId && !payload.r2SecretAccessKey && !payload.r2BucketName) return undefined;
   return {
     accountId: payload.r2AccountId,
     accessKeyId: payload.r2AccessKeyId,

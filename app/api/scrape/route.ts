@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
     let r2CleanedKey: string | undefined;
 
     // 組裝 R2 覆蓋配置
-    const r2Overrides: R2Overrides | undefined = (r2AccountId || r2AccessKeyId || r2SecretAccessKey)
+    const r2Overrides: R2Overrides | undefined = (r2AccountId || r2AccessKeyId || r2SecretAccessKey || r2BucketName)
       ? {
           accountId: r2AccountId,
           accessKeyId: r2AccessKeyId,

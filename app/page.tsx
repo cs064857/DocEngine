@@ -230,7 +230,7 @@ export default function DocEngineFrontend() {
     const fetchStatus = async () => {
       try {
         // 若有 R2 覆蓋配置，使用 POST 傳送認證；否則退回 GET
-        const hasR2Overrides = r2AccountId || r2AccessKeyId || r2SecretAccessKey;
+        const hasR2Overrides = r2AccountId || r2AccessKeyId || r2SecretAccessKey || r2BucketName;
         const res = hasR2Overrides
           ? await fetch(`/api/status/${taskId}`, {
             method: 'POST',
@@ -276,7 +276,7 @@ export default function DocEngineFrontend() {
       const loadTasks = async () => {
         setIsTasksLoading(true);
         try {
-          const hasR2Overrides = r2AccountId || r2AccessKeyId || r2SecretAccessKey;
+          const hasR2Overrides = r2AccountId || r2AccessKeyId || r2SecretAccessKey || r2BucketName;
           const res = hasR2Overrides
             ? await fetch(`/api/tasks`, {
               method: 'POST',
@@ -676,11 +676,12 @@ export default function DocEngineFrontend() {
 
     try {
       const domain = new URL(firstSuccessUrl).hostname;
-      const fetchOpts = {
-        method: r2AccountId ? 'POST' : 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        body: r2AccountId ? JSON.stringify({ r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName }) : undefined
-      };
+       const hasR2Overrides = r2AccountId || r2AccessKeyId || r2SecretAccessKey || r2BucketName;
+       const fetchOpts = {
+         method: hasR2Overrides ? 'POST' : 'GET',
+         headers: { 'Content-Type': 'application/json' },
+         body: hasR2Overrides ? JSON.stringify({ r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName }) : undefined
+       };
 
       const rawRes = await fetch(`/api/files?prefix=${encodeURIComponent(`raw/${taskStatus.date}/${domain}/`)}&limit=1000`, fetchOpts);
       const clnRes = await fetch(`/api/files?prefix=${encodeURIComponent(`cleaned/${taskStatus.date}/${domain}/`)}&limit=1000`, fetchOpts);
@@ -2456,4 +2457,3 @@ export default function DocEngineFrontend() {
     </div>
   );
 }
-

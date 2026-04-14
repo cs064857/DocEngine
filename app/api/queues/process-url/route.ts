@@ -50,7 +50,7 @@ export interface CrawlJobPayload {
 
 // 從 engineSettings 提取 R2 覆蓋配置的輔助函式
 function extractR2Overrides(engineSettings?: CrawlJobPayload['engineSettings']): R2Overrides | undefined {
-  if (!engineSettings?.r2AccountId && !engineSettings?.r2AccessKeyId && !engineSettings?.r2SecretAccessKey) {
+  if (!engineSettings?.r2AccountId && !engineSettings?.r2AccessKeyId && !engineSettings?.r2SecretAccessKey && !engineSettings?.r2BucketName) {
     return undefined;
   }
   return {

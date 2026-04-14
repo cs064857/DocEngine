@@ -50,9 +50,10 @@ function getDefaultClient(): S3Client {
  * 優先使用前端傳入的覆蓋值，否則退回環境變數預設值。
  */
 function resolveR2(overrides?: R2Overrides): { client: S3Client; bucket: string } {
-  const hasOverrides = overrides?.accountId || overrides?.accessKeyId || overrides?.secretAccessKey;
+  const bucket = overrides?.bucketName || config.r2.bucketName;
+  const hasCredentialOverrides = !!(overrides?.accountId || overrides?.accessKeyId || overrides?.secretAccessKey);
 
-  if (hasOverrides) {
+  if (hasCredentialOverrides) {
     const accountId = overrides!.accountId || config.r2.accountId;
     const accessKeyId = overrides!.accessKeyId || config.r2.accessKeyId;
     const secretAccessKey = overrides!.secretAccessKey || config.r2.secretAccessKey;
@@ -69,16 +70,13 @@ function resolveR2(overrides?: R2Overrides): { client: S3Client; bucket: string 
       credentials: { accessKeyId, secretAccessKey },
     });
 
-    return {
-      client,
-      bucket: overrides!.bucketName || config.r2.bucketName,
-    };
+    return { client, bucket };
   }
 
-  // 退回預設值
+  // 只有 bucketName 覆蓋時，使用環境變數預設 client，但仍套用 bucket 覆蓋。
   return {
     client: getDefaultClient(),
-    bucket: config.r2.bucketName,
+    bucket,
   };
 }
 

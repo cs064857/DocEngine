@@ -46,7 +46,7 @@ export async function POST(
 
     // 提取 R2 覆蓋配置
     const r2Overrides: R2Overrides | undefined = (
-      body.r2AccountId || body.r2AccessKeyId || body.r2SecretAccessKey
+      body.r2AccountId || body.r2AccessKeyId || body.r2SecretAccessKey || body.r2BucketName
     ) ? {
       accountId: body.r2AccountId,
       accessKeyId: body.r2AccessKeyId,

@@ -5,6 +5,9 @@
  * 從 R2 cleaned 文件生成 Antigravity SKILL.md
  */
 
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+
 import { piComplete } from '@/lib/services/pi-llm';
 import { listObjects, getObject } from '@/lib/r2';
 import type { R2Overrides } from '@/lib/r2';
@@ -31,23 +34,74 @@ const MAX_TOTAL_CHARS = 100_000;
 /** listObjects 每次最多取得的物件數量 */
 const LIST_OBJECTS_LIMIT = 500;
 
+const SKILL_CREATOR_SKILL_PATH = path.join(process.cwd(), 'skill-creator', 'SKILL.md');
+const SKILL_CREATOR_SNIPPET_MAX_CHARS = 12_000;
+
+async function loadSkillCreatorGuidance(): Promise<string | null> {
+  try {
+    const full = await readFile(SKILL_CREATOR_SKILL_PATH, 'utf-8');
+
+    const start = full.indexOf('### Write the SKILL.md');
+    const end = full.indexOf('## Running and evaluating test cases');
+
+    let snippet = full;
+    if (start >= 0) {
+      snippet = full.slice(start, end > start ? end : undefined);
+    }
+
+    snippet = snippet.trim();
+    if (snippet.length > SKILL_CREATOR_SNIPPET_MAX_CHARS) {
+      snippet = snippet.slice(0, SKILL_CREATOR_SNIPPET_MAX_CHARS).trimEnd() + '\n\n... [skill-creator guidance truncated] ...\n';
+    }
+
+    return snippet;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeSkillMarkdown(markdown: string): string {
+  let out = (markdown ?? '').trimStart();
+
+  // 移除整體包在 Markdown code fence 的情況，避免巢狀 code block。
+  if (out.startsWith('```markdown')) {
+    out = out.replace(/^```markdown\n/, '').replace(/\n```\s*$/, '');
+  } else if (out.startsWith('```')) {
+    out = out.replace(/^```\n/, '').replace(/\n```\s*$/, '');
+  }
+
+  out = out.trim();
+
+  // 若模型在 frontmatter 前多輸出一段前言，嘗試切到第一個 frontmatter。
+  if (!out.startsWith('---')) {
+    const idx = out.indexOf('---');
+    if (idx >= 0) out = out.slice(idx).trimStart();
+  }
+
+  return out;
+}
+
 async function listAllMdFiles(prefix: string, r2?: R2Overrides): Promise<string[]> {
   const objects = await listObjects(prefix, LIST_OBJECTS_LIMIT, r2);
   return objects.map((obj) => obj.Key!).filter((key) => key && key.endsWith('.md'));
 }
 
-async function readFiles(keys: string[], r2?: R2Overrides): Promise<{ key: string; filename: string; content: string }[]> {
+function toRelativePath(key: string, prefix: string): string {
+  const rel = key.startsWith(prefix) ? key.slice(prefix.length) : key;
+  return rel.replace(/^\/+/, '');
+}
+
+async function readFiles(keys: string[], prefix: string, r2?: R2Overrides): Promise<{ key: string; relativePath: string; content: string }[]> {
   const results = await Promise.allSettled(
     keys.map(async (key) => {
       const content = await getObject(key, r2);
-      const parts = key.split('/');
-      const filename = parts[parts.length - 1] || key;
-      return { key, filename, content };
+      const relativePath = toRelativePath(key, prefix);
+      return { key, relativePath, content };
     })
   );
 
   return results
-    .filter((r): r is PromiseFulfilledResult<{ key: string; filename: string; content: string }> => r.status === 'fulfilled')
+    .filter((r): r is PromiseFulfilledResult<{ key: string; relativePath: string; content: string }> => r.status === 'fulfilled')
     .map((r) => r.value);
 }
 
@@ -62,14 +116,14 @@ function truncateContent(content: string, maxChars: number): string {
   );
 }
 
-function buildDocumentContents(files: { filename: string; content: string }[]): string {
+function buildDocumentContents(files: { relativePath: string; content: string }[]): string {
   let totalChars = 0;
   const parts: string[] = [];
 
   for (const file of files) {
     const maxPerFile = totalChars > MAX_TOTAL_CHARS * 0.8 ? 500 : MAX_CHARS_PER_FILE;
     const truncated = truncateContent(file.content, maxPerFile);
-    parts.push(`### ${file.filename}\n\n${truncated}`);
+    parts.push(`### ${file.relativePath}\n\n${truncated}`);
     totalChars += truncated.length;
 
     if (totalChars > MAX_TOTAL_CHARS) {
@@ -81,8 +135,8 @@ function buildDocumentContents(files: { filename: string; content: string }[]): 
   return parts.join('\n\n---\n\n');
 }
 
-function buildFileList(files: { filename: string }[]): string {
-  return files.map((f, i) => `${i + 1}. \`references/${f.filename}\``).join('\n');
+function buildFileList(files: { relativePath: string }[]): string {
+  return files.map((f, i) => `${i + 1}. \`references/${f.relativePath}\``).join('\n');
 }
 
 /**
@@ -111,7 +165,7 @@ export async function generateSkill(params: {
   }
 
   onProgress?.('collecting', `找到 ${fileKeys.length} 個文件，正在讀取內容...`);
-  const files = await readFiles(fileKeys, r2);
+  const files = await readFiles(fileKeys, prefix, r2);
 
   if (files.length === 0) {
     throw new Error(`Failed to read any files from: ${prefix}`);
@@ -119,6 +173,9 @@ export async function generateSkill(params: {
 
   const fileList = buildFileList(files);
   const documentContents = buildDocumentContents(files);
+
+  // 預設安裝本地 skill-creator（作為生成指引）
+  const skillCreatorGuidance = await loadSkillCreatorGuidance();
 
   // === Phase 1: Summarize ===
   onProgress?.('summarize', `正在分析 ${files.length} 份文檔...`);
@@ -141,9 +198,14 @@ export async function generateSkill(params: {
 
   // === Phase 2: Generate ===
   onProgress?.('generate', '正在生成 SKILL.md 骨架...');
-  const generateSystemPrompt = customPrompt
-    ? `You are an expert at creating Antigravity/OpenCode skill documents.\n\nAdditional user instructions:\n${customPrompt}`
-    : 'You are an expert at creating Antigravity/OpenCode skill documents.';
+
+  const generateSystemPrompt = [
+    'You are an expert at creating Antigravity/OpenCode skill documents.',
+    skillCreatorGuidance
+      ? `\n\nYou have a preinstalled skill called "skill-creator". Follow these guidelines when writing SKILL.md:\n\n${skillCreatorGuidance}`
+      : '',
+    customPrompt ? `\n\nAdditional user instructions:\n${customPrompt}` : '',
+  ].join('');
 
   const generatePrompt = fillPromptTemplate(GENERATE_SKILL_PROMPT, {
     summary: summaryResponse.text,
@@ -169,28 +231,35 @@ export async function generateSkill(params: {
     fileList,
   });
 
+  const refineSystemPrompt = [
+    'You are a quality reviewer for Antigravity skill documents.',
+    skillCreatorGuidance
+      ? `\n\n(Installed skill: skill-creator) Use the same skill-creator guidelines to catch missing sections, missing reference mentions, and formatting issues.`
+      : '',
+  ].join('');
+
   const finalSkillMd = await piComplete({
     provider,
     modelId,
     apiKey,
     baseUrl,
-    systemPrompt: 'You are a quality reviewer for Antigravity skill documents.',
+    systemPrompt: refineSystemPrompt,
     userPrompt: refinePrompt,
     temperature: 0.2,
   });
 
   onProgress?.('refine', '校驗完成，SKILL.md 已就緒');
 
-  let finalMarkdown = finalSkillMd.text;
-  // If the model wrapped the output in a markdown block, remove it to prevent nested code blocks.
-  if (finalMarkdown.startsWith('```markdown')) {
-    finalMarkdown = finalMarkdown.replace(/^```markdown\n/, '').replace(/\n```$/, '');
-  } else if (finalMarkdown.startsWith('```')) {
-    finalMarkdown = finalMarkdown.replace(/^```\n/, '').replace(/\n```$/, '');
+  const finalMarkdown = normalizeSkillMarkdown(finalSkillMd.text);
+  if (!finalMarkdown || finalMarkdown.trim().length === 0) {
+    throw new Error('LLM returned empty SKILL.md');
+  }
+  if (!finalMarkdown.trimStart().startsWith('---')) {
+    throw new Error('Invalid SKILL.md: missing YAML frontmatter. Output must start with `---`.');
   }
 
   return {
     skillMd: finalMarkdown,
-    fileList: files.map((f) => f.filename),
+    fileList: files.map((f) => f.relativePath),
   };
 }

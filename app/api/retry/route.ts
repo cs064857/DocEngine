@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
 
         // 提取 R2 覆蓋配置
         const r2Overrides: R2Overrides | undefined = (
-            engineSettings?.r2AccountId || engineSettings?.r2AccessKeyId || engineSettings?.r2SecretAccessKey
+            engineSettings?.r2AccountId || engineSettings?.r2AccessKeyId || engineSettings?.r2SecretAccessKey || engineSettings?.r2BucketName
         ) ? {
             accountId: engineSettings?.r2AccountId,
             accessKeyId: engineSettings?.r2AccessKeyId,
