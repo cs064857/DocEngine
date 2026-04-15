@@ -71,6 +71,7 @@ async function markUrlProcessing(taskId: string, url: string, r2?: R2Overrides) 
     const entry = taskStatus.urls.find(u => u.url === url);
     if (entry && (entry.status === 'pending' || entry.status === 'failed')) {
       entry.status = 'processing';
+      taskStatus.updatedAt = new Date().toISOString();
       await putTaskStatus(taskId, taskStatus, r2);
     }
   } catch (e) {
@@ -215,6 +216,8 @@ async function updateTaskStatus(taskId: string, url: string, success: boolean, e
       console.log(`[Queue] Task ${taskId} has completed all URLs`);
     }
 
+    taskStatus.updatedAt = new Date().toISOString();
+
     await putTaskStatus(taskId, taskStatus, r2);
   } catch (error) {
     console.error(`[Queue] Failed to update task status for ${url}`, error);
@@ -239,6 +242,8 @@ async function logRetryAttempt(taskId: string, url: string, attempts: number, ma
     } else {
       taskStatus.retryingUrls.push({ url, attempts, maxRetries, error: errorMsg });
     }
+
+    taskStatus.updatedAt = new Date().toISOString();
 
     await putTaskStatus(taskId, taskStatus, r2);
   } catch (error) {

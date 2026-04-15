@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { listObjects, putObject, getObject } from '@/lib/r2';
 import type { R2Overrides } from '@/lib/r2';
 import { generateTaskId } from '@/lib/utils/helpers';
+import { buildSkillVersionPrefix } from '@/lib/utils/task-metadata';
 import { generateSkill } from '@/lib/processors/skill-generator';
 import { config } from '@/lib/config';
 
@@ -16,6 +17,11 @@ export interface SkillTaskStatus {
   error?: string;
   createdAt: string;
   updatedAt: string;
+  outputPrefix?: string;
+  provider?: string;
+  modelId?: string;
+  baseUrl?: string;
+  customPrompt?: string;
 }
 
 export interface SkillJobPayload {
@@ -33,7 +39,7 @@ export interface SkillJobPayload {
   r2BucketName?: string;
 }
 
-function extractR2Overrides(payload: Record<string, string | undefined>): R2Overrides | undefined {
+function extractR2Overrides(payload: Pick<SkillJobPayload, 'r2AccountId' | 'r2AccessKeyId' | 'r2SecretAccessKey' | 'r2BucketName'>): R2Overrides | undefined {
   if (!payload.r2AccountId && !payload.r2AccessKeyId && !payload.r2SecretAccessKey && !payload.r2BucketName) return undefined;
   return {
     accountId: payload.r2AccountId,
@@ -74,7 +80,8 @@ async function updateSkillTaskStatus(
  */
 async function processSkillGeneration(payload: SkillJobPayload) {
   const { taskId, date, domain, customPrompt, provider, modelId, apiKey, baseUrl } = payload;
-  const r2 = extractR2Overrides(payload as any);
+  const r2 = extractR2Overrides(payload);
+  const outputPrefix = buildSkillVersionPrefix(date, domain, taskId);
 
   console.log(`[Skill Worker] Processing task ${taskId}: ${domain} (${date})`);
 
@@ -109,23 +116,21 @@ async function processSkillGeneration(payload: SkillJobPayload) {
     // === 寫入 R2 ===
     await updateSkillTaskStatus(taskId, { phase: 'writing' }, r2);
 
-    const skillPrefix = `skills/${date}/${domain}`;
-
     // 寫入 SKILL.md
     await putObject(
-      `${skillPrefix}/SKILL.md`,
+      `${outputPrefix}SKILL.md`,
       result.skillMd,
       'text/markdown',
       r2
     );
-    console.log(`[Skill Worker] Written SKILL.md to ${skillPrefix}/SKILL.md`);
+    console.log(`[Skill Worker] Written SKILL.md to ${outputPrefix}SKILL.md`);
 
     // 複製 cleaned 文件到 references/
     const copyPromises = result.fileList.map(async (filename) => {
       try {
         const sourceKey = `cleaned/${date}/${domain}/${filename}`;
         const content = await getObject(sourceKey, r2);
-        const destKey = `${skillPrefix}/references/${filename}`;
+        const destKey = `${outputPrefix}references/${filename}`;
         await putObject(destKey, content, 'text/markdown', r2);
       } catch (err) {
         console.warn(`[Skill Worker] Failed to copy file ${filename}:`, err);
@@ -178,8 +183,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const resolvedProvider = provider || config.llm.skillGenerator.provider;
+    const resolvedModelId = modelId || config.llm.skillGenerator.modelId;
     const taskId = generateTaskId();
     const now = new Date().toISOString();
+    const outputPrefix = buildSkillVersionPrefix(date, domain, taskId);
 
     const taskStatus: SkillTaskStatus = {
       taskId,
@@ -190,6 +198,11 @@ export async function POST(req: NextRequest) {
       fileCount: 0,
       createdAt: now,
       updatedAt: now,
+      outputPrefix,
+      provider: resolvedProvider,
+      modelId: resolvedModelId,
+      baseUrl: baseUrl || undefined,
+      customPrompt: customPrompt || undefined,
     };
 
     await putObject(

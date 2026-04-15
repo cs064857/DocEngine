@@ -4,6 +4,7 @@ import { extractUrls } from '@/lib/processors/url-extractor';
 import { putTaskStatus } from '@/lib/r2';
 import type { R2Overrides } from '@/lib/r2';
 import { generateTaskId, formatDate } from '@/lib/utils/helpers';
+import { sanitizeEngineSettingsForStorage, summarizeDomains } from '@/lib/utils/task-metadata';
 import { config } from '@/lib/config';
 
 export async function POST(req: NextRequest) {
@@ -40,6 +41,8 @@ export async function POST(req: NextRequest) {
 
     const taskId = generateTaskId();
     const date = formatDate();
+    const now = new Date().toISOString();
+    const { domains, domainSummary } = summarizeDomains(urls);
 
     console.log(`[API Crawl] Extracted ${urls.length} URLs. Creating task: ${taskId}`);
 
@@ -64,6 +67,11 @@ export async function POST(req: NextRequest) {
       retryingUrls: [],
       urls: urls.map(u => ({ url: u, status: 'pending' as const })),
       date,
+      createdAt: now,
+      updatedAt: now,
+      domains,
+      domainSummary,
+      engineSettings: sanitizeEngineSettingsForStorage(engineSettings),
     }, r2Overrides);
 
     // Send jobs to queue topic 'crawl-urls'

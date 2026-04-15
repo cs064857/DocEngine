@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { checkCrawlJob, startCrawlJob } from '@/lib/services/crawler';
 import { downloadSingleFile, downloadFolderAsZip } from '@/lib/utils/download';
 import { buildR2Key } from '@/lib/utils/helpers';
+import { formatStoredDate, getTaskDisplayDate } from '@/lib/utils/task-metadata';
 
 import type { SkillTaskStatus } from '@/app/api/generate-skill/route';
 
@@ -38,6 +39,10 @@ interface JobTask {
   retryingUrls?: { url: string; attempts: number; maxRetries: number; error: string }[];
   urls?: { url: string; status: 'pending' | 'processing' | 'success' | 'failed'; error?: string }[];
   date: string;
+  createdAt?: string;
+  updatedAt?: string;
+  domains?: string[];
+  domainSummary?: string;
 }
 
 // 預設清理提示詞（與 CLEANING_PROMPT.md 同步）
@@ -195,6 +200,10 @@ export default function DocEngineFrontend() {
   const [isSkillSubmitting, setIsSkillSubmitting] = useState(false);
   const [skillError, setSkillError] = useState('');
   const [isFoldersLoading, setIsFoldersLoading] = useState(false);
+  const [skillHistory, setSkillHistory] = useState<SkillTaskStatus[]>([]);
+  const [isSkillHistoryLoading, setIsSkillHistoryLoading] = useState(false);
+  const [retryingSkillTaskIds, setRetryingSkillTaskIds] = useState<Set<string>>(new Set());
+  const [downloadingSkillTaskIds, setDownloadingSkillTaskIds] = useState<Set<string>>(new Set());
   const skillPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Hydration state for localStorage
@@ -204,6 +213,116 @@ export default function DocEngineFrontend() {
   const selectedSkillProviderInfo = piProviders.find((p) => p.id === skillProvider);
   const selectedSkillProviderModels = selectedSkillProviderInfo?.models || [];
   const selectedSkillModelInfo = selectedSkillProviderModels.find((m) => m.id === skillModel);
+
+  const loadSkillHistory = useCallback(async () => {
+    setIsSkillHistoryLoading(true);
+    try {
+      const hasR2Overrides = r2AccountId || r2AccessKeyId || r2SecretAccessKey || r2BucketName;
+      const res = hasR2Overrides
+        ? await fetch('/api/skill-tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            r2AccountId: r2AccountId || undefined,
+            r2AccessKeyId: r2AccessKeyId || undefined,
+            r2SecretAccessKey: r2SecretAccessKey || undefined,
+            r2BucketName: r2BucketName || undefined,
+          }),
+        })
+        : await fetch('/api/skill-tasks');
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to load skill history');
+      }
+
+      setSkillHistory(data.tasks || []);
+    } catch (err: unknown) {
+      setSkillError(err instanceof Error ? err.message : 'Failed to load skill history');
+    } finally {
+      setIsSkillHistoryLoading(false);
+    }
+  }, [r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
+
+  const startSkillPolling = useCallback(async (nextTaskId: string) => {
+    if (skillPollRef.current) clearInterval(skillPollRef.current);
+
+    const poll = async () => {
+      try {
+        const statusRes = await fetch(`/api/skill-status/${nextTaskId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName }),
+        });
+        const statusData = await statusRes.json();
+        if (!statusRes.ok) {
+          throw new Error(statusData.error || 'Failed to fetch skill status');
+        }
+        setSkillStatus(statusData);
+
+        if (statusData.status === 'completed' || statusData.status === 'failed') {
+          if (skillPollRef.current) clearInterval(skillPollRef.current);
+          await loadSkillHistory();
+        }
+      } catch {
+        // 忽略輪詢錯誤，避免中斷前端使用
+      }
+    };
+
+    await poll();
+    skillPollRef.current = setInterval(poll, 3000);
+  }, [loadSkillHistory, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
+
+  const submitSkillGeneration = useCallback(async (params: {
+    date: string;
+    domain: string;
+    provider: string;
+    modelId: string;
+    baseUrl?: string;
+    customPrompt?: string;
+  }) => {
+    if (params.provider === 'openai-codex' && !codexAuth) {
+      throw new Error('Please sign in with ChatGPT first');
+    }
+    if (params.provider !== 'openai-codex' && !skillApiKey) {
+      throw new Error('Please enter an API key');
+    }
+
+    setSkillError('');
+    setIsSkillSubmitting(true);
+    setSkillStatus(null);
+    setSelectedFolder(`${params.date}|${params.domain}`);
+
+    try {
+      const res = await fetch('/api/generate-skill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: params.date,
+          domain: params.domain,
+          provider: params.provider,
+          modelId: params.modelId,
+          apiKey: params.provider === 'openai-codex' ? undefined : skillApiKey,
+          baseUrl: params.provider === 'openai-codex' ? undefined : params.baseUrl,
+          customPrompt: params.customPrompt || undefined,
+          r2AccountId,
+          r2AccessKeyId,
+          r2SecretAccessKey,
+          r2BucketName,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to submit');
+
+      setSkillTaskId(data.taskId);
+      await loadSkillHistory();
+      await startSkillPolling(data.taskId);
+      return data.taskId as string;
+    } finally {
+      setIsSkillSubmitting(false);
+    }
+  }, [codexAuth, loadSkillHistory, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName, skillApiKey, startSkillPolling]);
 
   // Load configuration from localStorage on mount
   useEffect(() => {
@@ -231,6 +350,15 @@ export default function DocEngineFrontend() {
         if (parsed.r2AccessKeyId !== undefined) setR2AccessKeyId(parsed.r2AccessKeyId);
         if (parsed.r2SecretAccessKey !== undefined) setR2SecretAccessKey(parsed.r2SecretAccessKey);
         if (parsed.r2BucketName !== undefined) setR2BucketName(parsed.r2BucketName);
+
+        // Skill Generator API 配置
+        if (parsed.skillAuthMode !== undefined) setSkillAuthMode(parsed.skillAuthMode);
+        if (parsed.skillProvider !== undefined) setSkillProvider(parsed.skillProvider);
+        if (parsed.skillModel !== undefined) setSkillModel(parsed.skillModel);
+        if (parsed.skillApiKey !== undefined) setSkillApiKey(parsed.skillApiKey);
+        if (parsed.skillBaseUrl !== undefined) setSkillBaseUrl(parsed.skillBaseUrl);
+        if (parsed.skillUseCustomModel !== undefined) setSkillUseCustomModel(parsed.skillUseCustomModel);
+        if (parsed.skillCustomModelId !== undefined) setSkillCustomModelId(parsed.skillCustomModelId);
       } catch (e) {
         console.error("Failed to parse config from localStorage", e);
       }
@@ -304,7 +432,16 @@ export default function DocEngineFrontend() {
         depthLimit, maxConcurrency, maxUrls, maxRetries, urlTimeout, enableClean,
         firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt,
         urlExtractorApiKey, urlExtractorBaseUrl, urlExtractorModel, urlExtractorPrompt,
-        r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName
+        r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName,
+
+        // Skill Generator API 配置
+        skillAuthMode,
+        skillProvider,
+        skillModel,
+        skillApiKey,
+        skillBaseUrl,
+        skillUseCustomModel,
+        skillCustomModelId,
       };
       localStorage.setItem('docengineConfig', JSON.stringify(configObj));
     }
@@ -312,7 +449,16 @@ export default function DocEngineFrontend() {
     isMounted, depthLimit, maxConcurrency, maxUrls, maxRetries, urlTimeout, enableClean,
     firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt,
     urlExtractorApiKey, urlExtractorBaseUrl, urlExtractorModel, urlExtractorPrompt,
-    r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName
+    r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName,
+
+    // Skill Generator API 配置
+    skillAuthMode,
+    skillProvider,
+    skillModel,
+    skillApiKey,
+    skillBaseUrl,
+    skillUseCustomModel,
+    skillCustomModelId,
   ]);
 
   // Polling Effect
@@ -394,6 +540,20 @@ export default function DocEngineFrontend() {
       loadTasks();
     }
   }, [activeTab, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
+
+  useEffect(() => {
+    if (activeTab === 'skill') {
+      loadSkillHistory();
+    }
+  }, [activeTab, loadSkillHistory]);
+
+  useEffect(() => {
+    return () => {
+      if (skillPollRef.current) {
+        clearInterval(skillPollRef.current);
+      }
+    };
+  }, []);
 
   const handleSubmit = async (customInput?: string) => {
     const activeInput = customInput || inputValue;
@@ -641,8 +801,8 @@ export default function DocEngineFrontend() {
       // 3. Forward to Queue
       const queueInput = links.join('\n');
       await handleSubmit(queueInput);
-    } catch (e: any) {
-      setErrorMsg(e.message || 'Error occurred during crawl operation.');
+    } catch (e: unknown) {
+      setErrorMsg(e instanceof Error ? e.message : 'Error occurred during crawl operation.');
     } finally {
       setIsCrawlingJob(false);
       setCrawlStatusText('');
@@ -744,6 +904,36 @@ export default function DocEngineFrontend() {
     }
   }, [taskId, taskStatus, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
 
+  const handleRetryTask = useCallback(async () => {
+    if (!taskId || !taskStatus?.urls || taskStatus.urls.length === 0) return;
+
+    const allUrls = taskStatus.urls.map((item) => item.url);
+    setRetryingUrls(new Set(allUrls));
+    try {
+      const es = {
+        firecrawlKey: firecrawlKey || undefined,
+        llmApiKey: llmApiKey || undefined,
+        llmModel: llmModelName || undefined,
+        llmBaseUrl: llmBaseUrl || undefined,
+        cleaningPrompt: cleaningPrompt !== DEFAULT_CLEANING_PROMPT ? cleaningPrompt : undefined,
+        enableClean,
+        r2AccountId: r2AccountId || undefined,
+        r2AccessKeyId: r2AccessKeyId || undefined,
+        r2SecretAccessKey: r2SecretAccessKey || undefined,
+        r2BucketName: r2BucketName || undefined,
+      };
+      await fetch('/api/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId, retryAll: true, engineSettings: es }),
+      });
+    } catch (e) {
+      console.error('Retry task failed:', e);
+    } finally {
+      setRetryingUrls(new Set());
+    }
+  }, [taskId, taskStatus, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
+
   // 輔助函式：將異常或 0B 的檔案標示為失敗，以便重試
   const markKeysAsFailed = (failedList: { key: string, reason: string }[]) => {
     setTaskStatus(prev => {
@@ -810,10 +1000,11 @@ export default function DocEngineFrontend() {
     try {
       const key = buildR2Key(url, type, taskStatus.date);
       await downloadSingleFile(key, r2Config);
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'File is empty or not found';
       console.error(`Download ${type} single failed:`, e);
-      markKeysAsFailed([{ key: buildR2Key(url, type, taskStatus.date), reason: e.message || 'File is empty or not found' }]);
-      alert(`下載失敗: ${e.message || '檔案為空或無法存取'}`);
+      markKeysAsFailed([{ key: buildR2Key(url, type, taskStatus.date), reason: message }]);
+      alert(`下載失敗: ${message || '檔案為空或無法存取'}`);
     }
   };
 
@@ -845,9 +1036,10 @@ export default function DocEngineFrontend() {
           markKeysAsFailed(failedKeys);
         }, 300);
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : '';
       console.error(`Download All ${type} failed:`, e);
-      alert('批次下載發生錯誤，請稍後再試。\n' + (e.message || ''));
+      alert('批次下載發生錯誤，請稍後再試。\n' + message);
     } finally {
       setIsDownloading(false);
       setTimeout(() => setDownloadProgress(0), 1500);
@@ -870,8 +1062,9 @@ export default function DocEngineFrontend() {
       if (!res.ok) throw new Error(data.error || 'Failed to clean');
       alert(`LLM 清洗完成！結果大小: ${data.size} bytes`);
       fetchFileSizes();
-    } catch (e: any) {
-      alert('清洗服務發生錯誤: ' + (e.message || 'Unknown network error.'));
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Unknown network error.';
+      alert('清洗服務發生錯誤: ' + message);
     } finally {
       setIsLocalActionLoading(prev => { const n = new Set(prev); n.delete(url); return n; });
     }
@@ -1365,7 +1558,7 @@ export default function DocEngineFrontend() {
                           </span>
                           {taskStatus?.date && (
                             <span className="text-gray-500 text-xs font-mono border border-gray-700 bg-gray-800/50 px-2 py-0.5 rounded">
-                              {new Date(taskStatus.date).toLocaleString()}
+                              {getTaskDisplayDate(taskStatus)}
                             </span>
                           )}
                         </div>
@@ -1638,8 +1831,8 @@ export default function DocEngineFrontend() {
                                 setCodexAuth(data);
                                 if (!data.loggedIn) setSkillError('尚未偵測到有效憑證，請確保 auth.json 已正確掛載。');
                               }
-                            } catch (err: any) {
-                              setSkillError(err.message);
+                            } catch (err: unknown) {
+                              setSkillError(err instanceof Error ? err.message : 'Failed to check auth status');
                             }
                           }}
                           className="mt-1 w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium transition-colors cursor-pointer"
@@ -1853,54 +2046,19 @@ export default function DocEngineFrontend() {
                     return;
                   }
 
-                  setSkillError('');
-                  setIsSkillSubmitting(true);
-                  setSkillStatus(null);
-
                   try {
                     const [date, domain] = selectedFolder.split('|');
                     const isOAuth = skillAuthMode === 'oauth';
-                    const res = await fetch('/api/generate-skill', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        date,
-                        domain,
-                        provider: isOAuth ? 'openai-codex' : skillProvider,
-                        modelId: isOAuth ? 'gpt-4o' : (skillUseCustomModel ? skillCustomModelId.trim() : skillModel),
-                        apiKey: isOAuth ? undefined : skillApiKey,
-                        baseUrl: isOAuth ? undefined : (skillBaseUrl.trim() || undefined),
-                        customPrompt: skillCustomPrompt || undefined,
-                        r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName,
-                      }),
+                    await submitSkillGeneration({
+                      date,
+                      domain,
+                      provider: isOAuth ? 'openai-codex' : skillProvider,
+                      modelId: isOAuth ? 'gpt-4o' : (skillUseCustomModel ? skillCustomModelId.trim() : skillModel),
+                      baseUrl: isOAuth ? undefined : (skillBaseUrl.trim() || undefined),
+                      customPrompt: skillCustomPrompt || undefined,
                     });
-
-                    const data = await res.json();
-                    if (!res.ok) throw new Error(data.error || 'Failed to submit');
-
-                    setSkillTaskId(data.taskId);
-
-                    // 開始輪詢狀態
-                    if (skillPollRef.current) clearInterval(skillPollRef.current);
-                    skillPollRef.current = setInterval(async () => {
-                      try {
-                        const statusRes = await fetch(`/api/skill-status/${data.taskId}`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName }),
-                        });
-                        const statusData = await statusRes.json();
-                        setSkillStatus(statusData);
-
-                        if (statusData.status === 'completed' || statusData.status === 'failed') {
-                          if (skillPollRef.current) clearInterval(skillPollRef.current);
-                        }
-                      } catch { /* 忽略輪詢錯誤 */ }
-                    }, 3000);
                   } catch (err: unknown) {
                     setSkillError(err instanceof Error ? err.message : 'Unknown error');
-                  } finally {
-                    setIsSkillSubmitting(false);
                   }
                 }}
                 disabled={isSkillSubmitting || !selectedFolder}
@@ -1981,6 +2139,7 @@ export default function DocEngineFrontend() {
                             body: JSON.stringify({
                               date: skillStatus.date,
                               domain: skillStatus.domain,
+                              taskId: skillStatus.taskId,
                               r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName,
                             }),
                           });
@@ -2003,6 +2162,126 @@ export default function DocEngineFrontend() {
                   )}
                 </div>
               )}
+
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-gray-700">History</div>
+                    <div className="text-xs text-gray-500 mt-0.5">Each run is stored as an isolated version.</div>
+                  </div>
+                  <button
+                    onClick={loadSkillHistory}
+                    disabled={isSkillHistoryLoading}
+                    className="text-xs text-violet-700 hover:text-violet-900 font-medium disabled:opacity-50"
+                  >
+                    {isSkillHistoryLoading ? 'Loading...' : '↻ Refresh'}
+                  </button>
+                </div>
+
+                {isSkillHistoryLoading ? (
+                  <div className="text-xs text-gray-500 py-4">Loading skill history...</div>
+                ) : skillHistory.length === 0 ? (
+                  <div className="text-xs text-gray-500 py-4">No skill history yet.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {skillHistory.map((item) => (
+                      <div key={item.taskId} className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${
+                                item.status === 'completed' ? 'bg-green-100 text-green-700'
+                                  : item.status === 'failed' ? 'bg-red-100 text-red-700'
+                                    : 'bg-yellow-100 text-yellow-700'
+                              }`}>
+                                {item.status}
+                              </span>
+                              <span className="text-xs font-medium text-gray-700">{item.domain}</span>
+                              <span className="text-[10px] text-gray-400 font-mono">{formatStoredDate(item.createdAt, true)}</span>
+                            </div>
+                            <div className="text-[11px] text-gray-500 mt-1 break-all">
+                              {item.modelId ? `${item.provider || 'provider'} / ${item.modelId}` : (item.provider || 'Skill run')}
+                            </div>
+                            <div className="text-[10px] text-gray-400 font-mono mt-1">Version: {item.taskId}</div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              onClick={async () => {
+                                setRetryingSkillTaskIds((prev) => new Set(prev).add(item.taskId));
+                                try {
+                                  await submitSkillGeneration({
+                                    date: item.date,
+                                    domain: item.domain,
+                                    provider: item.provider || skillProvider,
+                                    modelId: item.modelId || skillModel,
+                                    baseUrl: item.baseUrl || undefined,
+                                    customPrompt: item.customPrompt || undefined,
+                                  });
+                                } catch (err: unknown) {
+                                  setSkillError(err instanceof Error ? err.message : 'Retry failed');
+                                } finally {
+                                  setRetryingSkillTaskIds((prev) => {
+                                    const next = new Set(prev);
+                                    next.delete(item.taskId);
+                                    return next;
+                                  });
+                                }
+                              }}
+                              disabled={isSkillSubmitting || retryingSkillTaskIds.has(item.taskId)}
+                              className="px-3 py-1.5 rounded-lg text-xs font-medium border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100 disabled:opacity-50"
+                            >
+                              {retryingSkillTaskIds.has(item.taskId) ? 'Retrying...' : 'Retry'}
+                            </button>
+
+                            <button
+                              onClick={async () => {
+                                setDownloadingSkillTaskIds((prev) => new Set(prev).add(item.taskId));
+                                try {
+                                  const res = await fetch('/api/skill-download', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                      date: item.date,
+                                      domain: item.domain,
+                                      taskId: item.taskId,
+                                      r2AccountId,
+                                      r2AccessKeyId,
+                                      r2SecretAccessKey,
+                                      r2BucketName,
+                                    }),
+                                  });
+                                  if (!res.ok) throw new Error('Download failed');
+
+                                  const blob = await res.blob();
+                                  const url = URL.createObjectURL(blob);
+                                  const a = document.createElement('a');
+                                  a.href = url;
+                                  a.download = `${item.domain}-${item.taskId.slice(0, 8)}-skill.zip`;
+                                  a.click();
+                                  URL.revokeObjectURL(url);
+                                } catch (err: unknown) {
+                                  setSkillError(err instanceof Error ? err.message : 'Download error');
+                                } finally {
+                                  setDownloadingSkillTaskIds((prev) => {
+                                    const next = new Set(prev);
+                                    next.delete(item.taskId);
+                                    return next;
+                                  });
+                                }
+                              }}
+                              disabled={item.status !== 'completed' || downloadingSkillTaskIds.has(item.taskId)}
+                              className="px-3 py-1.5 rounded-lg text-xs font-medium border border-green-200 text-green-700 bg-green-50 hover:bg-green-100 disabled:opacity-50"
+                            >
+                              {downloadingSkillTaskIds.has(item.taskId) ? 'Downloading...' : 'Download'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -2296,9 +2575,14 @@ export default function DocEngineFrontend() {
                             }`}>
                             {t.status}
                           </span>
+                          {t.domainSummary && (
+                            <span className="text-[10px] px-2.5 py-0.5 rounded-full border border-violet-200 bg-violet-50 text-violet-700 font-medium">
+                              {t.domainSummary}
+                            </span>
+                          )}
                           {t.date && (
                             <span className="text-xs text-gray-500 font-mono">
-                              {new Date(t.date).toLocaleString()}
+                              {getTaskDisplayDate(t)}
                             </span>
                           )}
                           <span className="text-[10px] text-gray-400 font-mono hidden sm:inline-block">ID: {t.taskId}</span>
@@ -2370,6 +2654,15 @@ export default function DocEngineFrontend() {
                 <p className="text-[10px] text-gray-400 font-mono mt-0.5">ID: {taskId}</p>
               </div>
               <div className="flex items-center gap-2">
+                {taskStatus?.urls?.length && taskStatus.status !== 'processing' ? (
+                  <button
+                    onClick={handleRetryTask}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-xs font-medium hover:bg-amber-100 transition-all"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                    Retry Task
+                  </button>
+                ) : null}
                 {taskStatus?.urls?.some(u => u.status === 'failed') && (
                   <button
                     onClick={handleRetryAllFailed}
@@ -2600,7 +2893,7 @@ export default function DocEngineFrontend() {
             {/* Drawer 底部 */}
             <div className="px-6 py-3 border-t border-[#E5D5C5] bg-white flex items-center justify-between">
               <span className="text-[10px] text-gray-400">
-                {taskStatus?.date ? new Date(taskStatus.date).toLocaleString() : ''}
+                {taskStatus ? getTaskDisplayDate(taskStatus) : ''}
               </span>
               <button
                 onClick={() => setDrawerOpen(false)}

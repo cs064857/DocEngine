@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { send } from '@vercel/queue';
 import { getTaskStatus, putTaskStatus } from '@/lib/r2';
 import type { R2Overrides } from '@/lib/r2';
+import { mergeStoredTaskEngineSettingsForRetry } from '@/lib/utils/task-metadata';
 
 /**
  * POST /api/retry
@@ -10,10 +11,10 @@ import type { R2Overrides } from '@/lib/r2';
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        const { taskId, urls, engineSettings } = body;
+        const { taskId, urls, retryAll, engineSettings } = body;
 
-        if (!taskId || !urls || !Array.isArray(urls) || urls.length === 0) {
-            return NextResponse.json({ error: 'taskId and urls[] are required' }, { status: 400 });
+        if (!taskId || (!retryAll && (!urls || !Array.isArray(urls) || urls.length === 0))) {
+            return NextResponse.json({ error: 'taskId and either retryAll or urls[] are required' }, { status: 400 });
         }
 
         // 提取 R2 覆蓋配置
@@ -32,19 +33,50 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Task not found' }, { status: 404 });
         }
 
-        // 更新 R2 中的狀態：將要重試的 URL 標記為 pending，並從 failedUrls 移除
-        for (const retryUrl of urls) {
-            // 從 failedUrls 陣列中移除
-            taskStatus.failedUrls = taskStatus.failedUrls.filter(f => f.url !== retryUrl);
-            taskStatus.failed = Math.max(0, taskStatus.failed - 1);
+        const retryUrls = retryAll
+            ? (taskStatus.urls?.map((item) => item.url) || [])
+            : urls;
 
-            // 更新 urls 追蹤陣列
+        if (!retryUrls || retryUrls.length === 0) {
+            return NextResponse.json({ error: 'Task has no tracked URLs to retry' }, { status: 400 });
+        }
+
+        const retryEngineSettings = retryAll
+            ? mergeStoredTaskEngineSettingsForRetry(taskStatus.engineSettings, engineSettings)
+            : { ...taskStatus.engineSettings, ...engineSettings };
+
+        if (retryAll) {
+            taskStatus.completed = 0;
+            taskStatus.failed = 0;
+            taskStatus.failedUrls = [];
+            taskStatus.retryingUrls = [];
             if (taskStatus.urls) {
-                const entry = taskStatus.urls.find(u => u.url === retryUrl);
-                if (entry) {
-                    entry.status = 'pending';
-                    entry.error = undefined;
+                taskStatus.urls = taskStatus.urls.map((entry) => ({
+                    ...entry,
+                    status: 'pending',
+                    error: undefined,
+                }));
+            }
+        } else {
+            // 更新 R2 中的狀態：將要重試的 URL 標記為 pending，並從 failedUrls 移除
+            for (const retryUrl of retryUrls) {
+                const removedFailures = taskStatus.failedUrls.filter((f) => f.url === retryUrl).length;
+                taskStatus.failedUrls = taskStatus.failedUrls.filter((f) => f.url !== retryUrl);
+                if (removedFailures > 0) {
+                    taskStatus.failed = Math.max(0, taskStatus.failed - removedFailures);
                 }
+
+                if (taskStatus.urls) {
+                    const entry = taskStatus.urls.find((u) => u.url === retryUrl);
+                    if (entry) {
+                        entry.status = 'pending';
+                        entry.error = undefined;
+                    }
+                }
+            }
+
+            if (taskStatus.retryingUrls) {
+                taskStatus.retryingUrls = taskStatus.retryingUrls.filter((item) => !retryUrls.includes(item.url));
             }
         }
 
@@ -53,24 +85,26 @@ export async function POST(req: NextRequest) {
             taskStatus.status = 'processing';
         }
 
+        taskStatus.updatedAt = new Date().toISOString();
+
         await putTaskStatus(taskId, taskStatus, r2Overrides);
 
         // 將 URL 重新送入 Queue
-        const queuePromises = urls.map((url: string) =>
+        const queuePromises = retryUrls.map((url: string) =>
             send('crawl-urls', {
                 taskId,
                 url,
                 date: taskStatus.date,
-                engineSettings,
+                engineSettings: retryEngineSettings,
             })
         );
         await Promise.all(queuePromises);
 
-        console.log(`[API Retry] Re-queued ${urls.length} URLs for task ${taskId}`);
+        console.log(`[API Retry] Re-queued ${retryUrls.length} URLs for task ${taskId}`);
 
         return NextResponse.json({
-            message: `${urls.length} URL(s) re-queued for retry`,
-            retried: urls,
+            message: `${retryUrls.length} URL(s) re-queued for retry`,
+            retried: retryUrls,
         });
     } catch (error: unknown) {
         console.error('[API Retry] Error:', error);

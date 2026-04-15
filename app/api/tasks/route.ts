@@ -1,10 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listObjects, getTaskStatus } from '@/lib/r2';
 import type { R2Overrides, JobTask } from '@/lib/r2';
+import { summarizeDomains } from '@/lib/utils/task-metadata';
+
+function normalizeTask(task: JobTask): JobTask {
+  if (task.domainSummary && task.domains?.length) {
+    return task;
+  }
+
+  const trackedUrls = task.urls?.map((item) => item.url) || [];
+  const fallbackUrls = trackedUrls.length > 0 ? trackedUrls : task.failedUrls.map((item) => item.url);
+  const { domains, domainSummary } = summarizeDomains(fallbackUrls);
+
+  return {
+    ...task,
+    domains,
+    domainSummary,
+  };
+}
 
 async function fetchTasks(r2Overrides?: R2Overrides) {
   // listObjects returns { Key, LastModified, Size, ... }[]
-  const objects = await listObjects('tasks/', 100, r2Overrides); 
+  const objects = await listObjects('tasks/', 1000, r2Overrides); 
   
   // Sort by LastModified descending
   const sortedObjects = objects.sort((a, b) => {
@@ -33,7 +50,7 @@ async function fetchTasks(r2Overrides?: R2Overrides) {
     })
   );
 
-  return tasks.filter(Boolean) as JobTask[];
+  return (tasks.filter(Boolean) as JobTask[]).map(normalizeTask);
 }
 
 export async function GET() {

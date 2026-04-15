@@ -1,5 +1,6 @@
 import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { config } from './config';
+import type { StoredTaskEngineSettings } from './utils/task-metadata';
 
 // 標準任務狀態結構
 export interface JobTask {
@@ -13,6 +14,11 @@ export interface JobTask {
   /** 個別 URL 的處理狀態追蹤清單 */
   urls?: { url: string; status: 'pending' | 'processing' | 'success' | 'failed'; error?: string }[];
   date: string;
+  createdAt?: string;
+  updatedAt?: string;
+  domains?: string[];
+  domainSummary?: string;
+  engineSettings?: StoredTaskEngineSettings;
 }
 
 // 前端可覆蓋的 R2 認證配置

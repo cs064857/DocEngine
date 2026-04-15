@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import JSZip from 'jszip';
 import { listObjects, getObject } from '@/lib/r2';
 import type { R2Overrides } from '@/lib/r2';
+import { buildLegacySkillPrefix, buildSkillVersionPrefix } from '@/lib/utils/task-metadata';
 
 /**
  * POST /api/skill-download
@@ -12,7 +13,7 @@ import type { R2Overrides } from '@/lib/r2';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { date, domain } = body;
+    const { date, domain, taskId } = body;
 
     if (!date || !domain) {
       return NextResponse.json(
@@ -32,8 +33,16 @@ export async function POST(req: NextRequest) {
           }
         : undefined;
 
-    const prefix = `skills/${date}/${domain}/`;
-    const objects = await listObjects(prefix, 500, r2);
+    const versionedPrefix = taskId ? buildSkillVersionPrefix(date, domain, taskId) : undefined;
+    const fallbackPrefix = buildLegacySkillPrefix(date, domain);
+
+    let prefix = versionedPrefix || fallbackPrefix;
+    let objects = await listObjects(prefix, 500, r2);
+
+    if (objects.length === 0 && versionedPrefix) {
+      prefix = fallbackPrefix;
+      objects = await listObjects(prefix, 500, r2);
+    }
 
     if (!objects || objects.length === 0) {
       return NextResponse.json(
