@@ -503,10 +503,10 @@ export default function DocEngineFrontend() {
 
   // 當 taskId 被設定時自動打開 Drawer
   useEffect(() => {
-    if (taskId) {
+    if (taskId && (!taskStatus || taskStatus.status === 'processing')) {
       setDrawerOpen(true);
     }
-  }, [taskId]);
+  }, [taskId, taskStatus]);
 
   // Fetch History Tasks
   useEffect(() => {
@@ -716,7 +716,16 @@ export default function DocEngineFrontend() {
       const data = await res.json();
 
       if (!res.ok) {
+        if (data.taskId && data.task && (!taskId || taskStatus?.status !== 'processing')) {
+          setTaskStatus(data.task);
+          setTaskId(data.taskId);
+        }
         throw new Error(data.error || data.details || 'Scrape request failed');
+      }
+
+      if (data.taskId && data.task && (!taskId || taskStatus?.status !== 'processing')) {
+        setTaskStatus(data.task);
+        setTaskId(data.taskId);
       }
 
       setScrapeResult({
