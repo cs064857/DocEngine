@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
   experimental: {
     serverActions: { bodySizeLimit: '4mb' },
   },
+  serverExternalPackages: ['@mariozechner/pi-ai', '@vercel/queue'],
 };
 
 export default nextConfig;

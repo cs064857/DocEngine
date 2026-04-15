@@ -1,12 +1,17 @@
 import fs from 'fs';
 import path from 'path';
-import { getOAuthApiKey } from '@mariozechner/pi-ai/oauth';
 import { config } from '@/lib/config';
 
 // 我們假設透過 CLI `npx @mariozechner/pi-ai login openai-codex` 生成的檔案掛載在環境變數配置的路徑
 const getAuthFilePath = () => {
-  // 對應 Docker 掛載 或 本地開發
-  return path.resolve(config.llm.skillGenerator.authJsonPath || './auth.json');
+  const configuredPath = config.llm.skillGenerator.authJsonPath || './auth.json';
+  if (path.isAbsolute(configuredPath)) {
+    return configuredPath;
+  }
+
+  // 使用 runtime cwd，避免 Turbopack 將整個專案根目錄加入 trace。
+  const relativePath = configuredPath.replace(/^\.\/[\\/]?/, '');
+  return path.join(/* turbopackIgnore: true */ process.cwd(), relativePath || 'auth.json');
 };
 
 /**
@@ -64,6 +69,12 @@ export function checkCodexAuthStatus(): { loggedIn: boolean; expires?: number } 
  * 這個函式負責接住新 credential 並寫回檔案。
  */
 export async function getCodexApiKey(): Promise<string> {
+  const { getOAuthApiKey } = await import(
+    /* webpackIgnore: true */
+    /* turbopackIgnore: true */
+    '@mariozechner/pi-ai/oauth'
+  );
+
   const auth = getAuthData();
   if (!auth) {
     throw new Error('找不到 auth.json。請確保在 VPS 上使用 CLI 登入或正確掛載 Volume。');
