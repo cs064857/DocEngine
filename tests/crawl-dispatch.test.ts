@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { dispatchCrawlJobs } from '../lib/services/crawl-dispatch';
+import type { CrawlJobPayload } from '../lib/services/crawl-dispatch';
 
-const jobs = [
+const jobs: CrawlJobPayload[] = [
   {
     taskId: 'task-1',
     url: 'https://example.com/a',
@@ -24,10 +25,10 @@ test('dispatchCrawlJobs bypasses queue when current runtime cannot support backg
 
   const mode = await dispatchCrawlJobs(jobs, {
     canUseBackgroundQueue: () => false,
-    sendToQueue: async (_topic, job) => {
+    sendToQueue: async (_topic: string, job: CrawlJobPayload) => {
       sent.push(job.url);
     },
-    processJobsInline: async (pendingJobs) => {
+    processJobsInline: async (pendingJobs: CrawlJobPayload[]) => {
       processedInline.push(...pendingJobs.map((job) => job.url));
     },
   });
@@ -43,11 +44,11 @@ test('dispatchCrawlJobs falls back to inline processing when queue auth is unava
 
   const mode = await dispatchCrawlJobs(jobs, {
     canUseBackgroundQueue: () => true,
-    sendToQueue: async (_topic, job) => {
+    sendToQueue: async (_topic: string, job: CrawlJobPayload) => {
       sent.push(job.url);
       throw new Error('Failed to get OIDC token. This usually means the function is running outside of a Vercel Function environment.');
     },
-    processJobsInline: async (pendingJobs) => {
+    processJobsInline: async (pendingJobs: CrawlJobPayload[]) => {
       processedInline.push(...pendingJobs.map((job) => job.url));
     },
   });
@@ -63,13 +64,13 @@ test('dispatchCrawlJobs only falls back for jobs that were not already queued', 
 
   const mode = await dispatchCrawlJobs(jobs, {
     canUseBackgroundQueue: () => true,
-    sendToQueue: async (_topic, job) => {
+    sendToQueue: async (_topic: string, job: CrawlJobPayload) => {
       sent.push(job.url);
       if (job.url.endsWith('/b')) {
         throw new Error('Failed to get OIDC token. This usually means the function is running outside of a Vercel Function environment.');
       }
     },
-    processJobsInline: async (pendingJobs) => {
+    processJobsInline: async (pendingJobs: CrawlJobPayload[]) => {
       processedInline.push(...pendingJobs.map((job) => job.url));
     },
   });

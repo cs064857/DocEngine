@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { send } from '@vercel/queue';
 import { extractUrls } from '@/lib/processors/url-extractor';
 import { putTaskStatus } from '@/lib/r2';
 import type { R2Overrides } from '@/lib/r2';
+import { dispatchCrawlJobs } from '@/lib/services/crawl-dispatch';
 import { generateTaskId, formatDate } from '@/lib/utils/helpers';
 import { sanitizeEngineSettingsForStorage, summarizeDomains } from '@/lib/utils/task-metadata';
 import { config } from '@/lib/config';
@@ -74,27 +74,26 @@ export async function POST(req: NextRequest) {
       engineSettings: sanitizeEngineSettingsForStorage(engineSettings),
     }, r2Overrides);
 
-    // Send jobs to queue topic 'crawl-urls'
-    console.log(`[API Crawl] Sending ${urls.length} messages to Queue...`);
+    console.log(`[API Crawl] Dispatching ${urls.length} URL(s)...`);
 
-    const queuePromises = urls.map(url => {
-      // payload structure matches what processor expects
-      return send('crawl-urls', {
+    const dispatchMode = await dispatchCrawlJobs(
+      urls.map((url) => ({
         taskId,
         url,
         date,
-        engineSettings
-      });
-    });
+        engineSettings,
+      }))
+    );
 
-    await Promise.all(queuePromises);
-
-    console.log(`[API Crawl] Task ${taskId} started successfully.`);
+    console.log(`[API Crawl] Task ${taskId} started successfully via ${dispatchMode}.`);
 
     return NextResponse.json({
       taskId,
       urlCount: urls.length,
-      message: 'Task queued successfully',
+      dispatchMode,
+      message: dispatchMode === 'queue'
+        ? 'Task queued successfully'
+        : 'Task started successfully',
       urls: urls,
     });
 

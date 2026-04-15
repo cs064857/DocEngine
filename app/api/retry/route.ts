@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { send } from '@vercel/queue';
 import { getTaskStatus, putTaskStatus } from '@/lib/r2';
 import type { R2Overrides } from '@/lib/r2';
+import { dispatchCrawlJobs } from '@/lib/services/crawl-dispatch';
 import { mergeStoredTaskEngineSettingsForRetry } from '@/lib/utils/task-metadata';
 
 /**
@@ -89,21 +89,22 @@ export async function POST(req: NextRequest) {
 
         await putTaskStatus(taskId, taskStatus, r2Overrides);
 
-        // 將 URL 重新送入 Queue
-        const queuePromises = retryUrls.map((url: string) =>
-            send('crawl-urls', {
+        const dispatchMode = await dispatchCrawlJobs(
+            retryUrls.map((url: string) => ({
                 taskId,
                 url,
                 date: taskStatus.date,
                 engineSettings: retryEngineSettings,
-            })
+            }))
         );
-        await Promise.all(queuePromises);
 
-        console.log(`[API Retry] Re-queued ${retryUrls.length} URLs for task ${taskId}`);
+        console.log(`[API Retry] Re-dispatched ${retryUrls.length} URLs for task ${taskId} via ${dispatchMode}`);
 
         return NextResponse.json({
-            message: `${retryUrls.length} URL(s) re-queued for retry`,
+            message: dispatchMode === 'queue'
+                ? `${retryUrls.length} URL(s) re-queued for retry`
+                : `${retryUrls.length} URL(s) restarted successfully`,
+            dispatchMode,
             retried: retryUrls,
         });
     } catch (error: unknown) {
