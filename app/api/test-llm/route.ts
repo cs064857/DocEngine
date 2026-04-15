@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { chatCompletion } from '@/lib/services/llm';
 import { piComplete } from '@/lib/services/pi-llm';
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 /**
  * POST /api/test-llm
@@ -30,8 +30,8 @@ export async function POST(req: NextRequest) {
     const testPrompt = 'Reply with exactly one word: "OK"';
     let responseText = '';
 
-    // 15 秒 timeout
-    const timeoutMs = 15000;
+    // 60 秒 timeout
+    const timeoutMs = 60000;
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error(`LLM test timed out after ${timeoutMs / 1000}s`)), timeoutMs)
     );

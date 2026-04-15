@@ -198,6 +198,8 @@ export default function DocEngineFrontend() {
   const [isCleanerTesting, setIsCleanerTesting] = useState(false);
   const [skillTestResult, setSkillTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
   const [isSkillTesting, setIsSkillTesting] = useState(false);
+  const [extractorTestResult, setExtractorTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
+  const [isExtractorTesting, setIsExtractorTesting] = useState(false);
   const [selectedFolder, setSelectedFolder] = useState<string>('');
   const [skillCustomPrompt, setSkillCustomPrompt] = useState('');
   const [showSkillPrompt, setShowSkillPrompt] = useState(false);
@@ -2650,6 +2652,51 @@ export default function DocEngineFrontend() {
                             Reset to default
                           </button>
                         </div>
+                      </div>
+                    )}
+                  </div>
+                  {/* === URL Extractor 連線測試按鈕 === */}
+                  <div className="border-t border-[#E5D5C5] pt-4">
+                    <button
+                      onClick={async () => {
+                        setIsExtractorTesting(true);
+                        setExtractorTestResult(null);
+                        try {
+                          const res = await fetch('/api/test-llm', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              apiKey: urlExtractorApiKey || undefined,
+                              baseUrl: urlExtractorBaseUrl || undefined,
+                              model: urlExtractorModel,
+                            }),
+                          });
+                          const data = await res.json();
+                          if (data.success) {
+                            setExtractorTestResult({ success: true, message: `✅ Connected (${data.latencyMs}ms) — Model: ${data.model}`, latencyMs: data.latencyMs });
+                          } else {
+                            setExtractorTestResult({ success: false, message: `❌ ${data.error}`, latencyMs: data.latencyMs });
+                          }
+                        } catch (err: unknown) {
+                          setExtractorTestResult({ success: false, message: `❌ ${err instanceof Error ? err.message : 'Network error'}` });
+                        } finally {
+                          setIsExtractorTesting(false);
+                        }
+                      }}
+                      disabled={isExtractorTesting}
+                      className="w-full py-2 rounded-xl text-xs font-medium border border-teal-200 text-teal-700 bg-teal-50 hover:bg-teal-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1.5"
+                    >
+                      {isExtractorTesting ? (
+                        <><svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25"></circle><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" className="opacity-75"></path></svg> Testing...</>
+                      ) : '🔗 Test Connection'}
+                    </button>
+                    {extractorTestResult && (
+                      <div className={`mt-2 text-xs px-3 py-2 rounded-lg border ${
+                        extractorTestResult.success
+                          ? 'bg-green-50 border-green-200 text-green-700'
+                          : 'bg-red-50 border-red-200 text-red-700'
+                      }`}>
+                        {extractorTestResult.message}
                       </div>
                     )}
                   </div>
