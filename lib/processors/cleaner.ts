@@ -73,9 +73,15 @@ export async function cleanContent(rawMarkdown: string, overrides?: CleanerOverr
       { role: 'system', content: promptToUse },
       { role: 'user', content: rawMarkdown }
     ]);
+
+    // LLM 回傳空白內容時，視為錯誤（可能是模型問題或 prompt 不相容）
+    if (!cleaned || cleaned.trim() === '') {
+      throw new Error(`LLM returned empty completion (model=${modelToUse}, baseUrl=${urlToUse})`);
+    }
+
     return cleaned;
   } catch (error) {
     console.error('[Cleaner] Error cleaning content:', error);
-    return '';
+    throw error; // 不再靜默吞掉錯誤，讓呼叫端決定如何處理
   }
 }

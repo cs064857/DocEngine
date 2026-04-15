@@ -4,7 +4,7 @@ import type { R2Overrides } from '@/lib/r2';
 import { cleanContent } from '@/lib/processors/cleaner';
 import { buildR2Key } from '@/lib/utils/helpers';
 
-export const maxDuration = 60; // 允許較長執行時間以處理大型 LLM 請求
+export const maxDuration = 300; // Pro 計劃可支援 300 秒，避免 LLM 代理過慢導致 timeout
 
 // 將前端欄位名稱 (r2AccountId) 映射為 R2 SDK 欄位名稱 (accountId)
 function extractR2(raw?: Record<string, string>): R2Overrides | undefined {
@@ -43,16 +43,19 @@ export async function POST(req: Request) {
 
         const { llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt } = engineSettings || {};
 
-        // 2. 呼叫 LLM 清洗
-        const cleanedContent = await cleanContent(rawContent, {
-            apiKey: llmApiKey,
-            model: llmModelName,
-            baseUrl: llmBaseUrl,
-            prompt: cleaningPrompt,
-        });
-
-        if (!cleanedContent || cleanedContent.trim() === '') {
-            return NextResponse.json({ error: 'LLM returned empty completion' }, { status: 500 });
+        // 2. 呼叫 LLM 清洗（cleanContent 現在會拋出帶有完整 HTTP 錯誤的 Error）
+        let cleanedContent: string;
+        try {
+            cleanedContent = await cleanContent(rawContent, {
+                apiKey: llmApiKey,
+                model: llmModelName,
+                baseUrl: llmBaseUrl,
+                prompt: cleaningPrompt,
+            });
+        } catch (cleanError: any) {
+            const msg = cleanError?.message || 'LLM cleaning failed';
+            console.error('Clean API: LLM cleaning error:', msg);
+            return NextResponse.json({ error: `LLM cleaning failed: ${msg}` }, { status: 502 });
         }
 
         // 3. 儲存至 R2 (cleaned)
@@ -68,3 +71,4 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: error.message || 'Unknown error' }, { status: 500 });
     }
 }
+

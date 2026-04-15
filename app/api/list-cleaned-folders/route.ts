@@ -2,16 +2,24 @@ import { NextRequest, NextResponse } from 'next/server';
 import { listObjects } from '@/lib/r2';
 import type { R2Overrides } from '@/lib/r2';
 
+interface R2Object {
+  Key?: string;
+  Size?: number;
+}
+
 /**
  * 解析 cleaned/ 下的資料夾結構
  * 目錄格式：cleaned/{date}/{domain}/{path}.md
  * 
- * 返回唯一的 { date, domain } 組合
+ * 返回唯一的 { date, domain } 組合，包含 emptyFileCount（0B 檔案數量）
  */
-function parseFolders(keys: string[]): { date: string; domain: string; prefix: string; fileCount: number }[] {
-  const folderMap = new Map<string, { date: string; domain: string; prefix: string; count: number }>();
+function parseFolders(objects: R2Object[]): { date: string; domain: string; prefix: string; fileCount: number; emptyFileCount: number }[] {
+  const folderMap = new Map<string, { date: string; domain: string; prefix: string; count: number; emptyCount: number }>();
 
-  for (const key of keys) {
+  for (const obj of objects) {
+    const key = obj.Key;
+    if (!key) continue;
+
     // cleaned/20260414/docs.example.com/some/path.md
     const parts = key.split('/');
     if (parts.length < 4 || parts[0] !== 'cleaned') continue;
@@ -26,13 +34,20 @@ function parseFolders(keys: string[]): { date: string; domain: string; prefix: s
         domain,
         prefix: `cleaned/${date}/${domain}/`,
         count: 0,
+        emptyCount: 0,
       });
     }
-    folderMap.get(folderKey)!.count += 1;
+    const entry = folderMap.get(folderKey)!;
+    entry.count += 1;
+
+    // 檢查檔案大小是否為 0
+    if (obj.Size !== undefined && obj.Size === 0) {
+      entry.emptyCount += 1;
+    }
   }
 
   return Array.from(folderMap.values())
-    .map((v) => ({ date: v.date, domain: v.domain, prefix: v.prefix, fileCount: v.count }))
+    .map((v) => ({ date: v.date, domain: v.domain, prefix: v.prefix, fileCount: v.count, emptyFileCount: v.emptyCount }))
     .sort((a, b) => b.date.localeCompare(a.date)); // 最新日期在前
 }
 
@@ -56,11 +71,10 @@ export async function POST(req: NextRequest) {
           }
         : undefined;
 
-    // 列出 cleaned/ 下所有物件
+    // 列出 cleaned/ 下所有物件（完整 object 含 Size）
     const objects = await listObjects('cleaned/', 1000, r2);
-    const keys = objects.map((obj) => obj.Key!).filter(Boolean);
 
-    const folders = parseFolders(keys);
+    const folders = parseFolders(objects as R2Object[]);
 
     return NextResponse.json({ folders });
   } catch (error: unknown) {

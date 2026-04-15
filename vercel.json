@@ -1,5 +1,8 @@
 {
   "functions": {
+    "app/api/clean/route.ts": {
+      "maxDuration": 300
+    },
     "app/api/queues/process-url/route.ts": {
       "maxDuration": 300,
       "experimentalTriggers": [

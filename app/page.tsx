@@ -191,7 +191,13 @@ export default function DocEngineFrontend() {
   const [piProviders, setPiProviders] = useState<PiProviderInfo[]>([]);
   const [isPiProvidersLoading, setIsPiProvidersLoading] = useState(false);
   const [piProvidersError, setPiProvidersError] = useState('');
-  const [availableFolders, setAvailableFolders] = useState<{ date: string; domain: string; prefix: string; fileCount: number }[]>([]);
+  const [availableFolders, setAvailableFolders] = useState<{ date: string; domain: string; prefix: string; fileCount: number; emptyFileCount: number }[]>([]);
+
+  // === LLM 連線測試狀態 ===
+  const [cleanerTestResult, setCleanerTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
+  const [isCleanerTesting, setIsCleanerTesting] = useState(false);
+  const [skillTestResult, setSkillTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
+  const [isSkillTesting, setIsSkillTesting] = useState(false);
   const [selectedFolder, setSelectedFolder] = useState<string>('');
   const [skillCustomPrompt, setSkillCustomPrompt] = useState('');
   const [showSkillPrompt, setShowSkillPrompt] = useState(false);
@@ -1968,6 +1974,52 @@ export default function DocEngineFrontend() {
                         Leave blank to use the provider default.
                       </div>
                     </div>
+                    {/* === Skill LLM 連線測試按鈕 === */}
+                    <div>
+                      <button
+                        onClick={async () => {
+                          setIsSkillTesting(true);
+                          setSkillTestResult(null);
+                          try {
+                            const res = await fetch('/api/test-llm', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                provider: skillProvider,
+                                modelId: skillUseCustomModel ? skillCustomModelId.trim() : skillModel,
+                                apiKey: skillApiKey || undefined,
+                                baseUrl: skillBaseUrl.trim() || undefined,
+                              }),
+                            });
+                            const data = await res.json();
+                            if (data.success) {
+                              setSkillTestResult({ success: true, message: `✅ Connected (${data.latencyMs}ms) — Model: ${data.model}`, latencyMs: data.latencyMs });
+                            } else {
+                              setSkillTestResult({ success: false, message: `❌ ${data.error}`, latencyMs: data.latencyMs });
+                            }
+                          } catch (err: unknown) {
+                            setSkillTestResult({ success: false, message: `❌ ${err instanceof Error ? err.message : 'Network error'}` });
+                          } finally {
+                            setIsSkillTesting(false);
+                          }
+                        }}
+                        disabled={isSkillTesting || (!skillApiKey && skillProvider !== 'openai-codex')}
+                        className="w-full py-2 rounded-xl text-xs font-medium border border-teal-200 text-teal-700 bg-teal-50 hover:bg-teal-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1.5"
+                      >
+                        {isSkillTesting ? (
+                          <><svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25"></circle><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" className="opacity-75"></path></svg> Testing...</>
+                        ) : '🔗 Test LLM Connection'}
+                      </button>
+                      {skillTestResult && (
+                        <div className={`mt-2 text-xs px-3 py-2 rounded-lg border ${
+                          skillTestResult.success
+                            ? 'bg-green-50 border-green-200 text-green-700'
+                            : 'bg-red-50 border-red-200 text-red-700'
+                        }`}>
+                          {skillTestResult.message}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -2009,10 +2061,24 @@ export default function DocEngineFrontend() {
                   <option value="">Select a cleaned folder...</option>
                   {availableFolders.map((f) => (
                     <option key={f.prefix} value={`${f.date}|${f.domain}`}>
-                      {f.domain} ({f.date}) — {f.fileCount} files
+                      {f.domain} ({f.date}) — {f.fileCount} files{f.emptyFileCount > 0 ? ` (⚠ ${f.emptyFileCount} empty)` : ''}
                     </option>
                   ))}
                 </select>
+                {/* 0B 檔案警告提示 */}
+                {selectedFolder && (() => {
+                  const [selDate, selDomain] = selectedFolder.split('|');
+                  const folder = availableFolders.find(f => f.date === selDate && f.domain === selDomain);
+                  if (folder && folder.emptyFileCount > 0) {
+                    return (
+                      <div className="mt-2 text-xs px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 flex items-start gap-2">
+                        <span className="text-base leading-none">⚠️</span>
+                        <span>This folder contains <strong>{folder.emptyFileCount}</strong> empty (0B) file{folder.emptyFileCount > 1 ? 's' : ''}. These likely failed LLM cleaning. Consider re-cleaning before generating a skill.</span>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
               </div>
 
               {/* === 自訂 Prompt（可收合） === */}
@@ -2461,6 +2527,51 @@ export default function DocEngineFrontend() {
                             Reset to default
                           </button>
                         </div>
+                      </div>
+                    )}
+                  </div>
+                  {/* === LLM Content Cleaner 連線測試按鈕 === */}
+                  <div className="border-t border-[#E5D5C5] pt-4">
+                    <button
+                      onClick={async () => {
+                        setIsCleanerTesting(true);
+                        setCleanerTestResult(null);
+                        try {
+                          const res = await fetch('/api/test-llm', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              apiKey: llmApiKey || undefined,
+                              baseUrl: llmBaseUrl || undefined,
+                              model: llmModelName,
+                            }),
+                          });
+                          const data = await res.json();
+                          if (data.success) {
+                            setCleanerTestResult({ success: true, message: `✅ Connected (${data.latencyMs}ms) — Model: ${data.model}`, latencyMs: data.latencyMs });
+                          } else {
+                            setCleanerTestResult({ success: false, message: `❌ ${data.error}`, latencyMs: data.latencyMs });
+                          }
+                        } catch (err: unknown) {
+                          setCleanerTestResult({ success: false, message: `❌ ${err instanceof Error ? err.message : 'Network error'}` });
+                        } finally {
+                          setIsCleanerTesting(false);
+                        }
+                      }}
+                      disabled={isCleanerTesting}
+                      className="w-full py-2 rounded-xl text-xs font-medium border border-teal-200 text-teal-700 bg-teal-50 hover:bg-teal-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1.5"
+                    >
+                      {isCleanerTesting ? (
+                        <><svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25"></circle><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" className="opacity-75"></path></svg> Testing...</>
+                      ) : '🔗 Test Connection'}
+                    </button>
+                    {cleanerTestResult && (
+                      <div className={`mt-2 text-xs px-3 py-2 rounded-lg border ${
+                        cleanerTestResult.success
+                          ? 'bg-green-50 border-green-200 text-green-700'
+                          : 'bg-red-50 border-red-200 text-red-700'
+                      }`}>
+                        {cleanerTestResult.message}
                       </div>
                     )}
                   </div>
