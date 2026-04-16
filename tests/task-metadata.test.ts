@@ -70,6 +70,7 @@ test('sanitizeEngineSettingsForStorage removes secrets but keeps crawl behavior 
       llmBaseUrl: 'https://example.com',
       cleaningPrompt: 'keep headings',
       enableClean: true,
+      maxConcurrency: 6,
       maxRetries: 4,
       urlTimeout: 300,
     }),
@@ -78,6 +79,7 @@ test('sanitizeEngineSettingsForStorage removes secrets but keeps crawl behavior 
       llmBaseUrl: 'https://example.com',
       cleaningPrompt: 'keep headings',
       enableClean: true,
+      maxConcurrency: 6,
       maxRetries: 4,
       urlTimeout: 300,
     }
@@ -92,6 +94,7 @@ test('mergeStoredTaskEngineSettingsForRetry restores original behavior and fills
         llmBaseUrl: 'https://stored.example.com',
         cleaningPrompt: 'stored prompt',
         enableClean: true,
+        maxConcurrency: 3,
         maxRetries: 5,
       },
       {
@@ -109,6 +112,7 @@ test('mergeStoredTaskEngineSettingsForRetry restores original behavior and fills
       llmBaseUrl: 'https://stored.example.com',
       cleaningPrompt: 'stored prompt',
       enableClean: true,
+      maxConcurrency: 3,
       maxRetries: 5,
       firecrawlKey: 'fc-runtime',
       llmApiKey: 'llm-runtime',

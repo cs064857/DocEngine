@@ -15,6 +15,7 @@ export interface CrawlEngineSettings {
   urlExtractorBaseUrl?: string;
   urlExtractorModel?: string;
   urlExtractorPrompt?: string;
+  maxConcurrency?: number;
   maxRetries?: number;
   urlTimeout?: number;
   maxUrls?: string;
@@ -138,6 +139,7 @@ export function sanitizeEngineSettingsForStorage(
     urlExtractorBaseUrl: engineSettings.urlExtractorBaseUrl,
     urlExtractorModel: engineSettings.urlExtractorModel,
     urlExtractorPrompt: engineSettings.urlExtractorPrompt,
+    maxConcurrency: engineSettings.maxConcurrency,
     maxRetries: engineSettings.maxRetries,
     urlTimeout: engineSettings.urlTimeout,
     maxUrls: engineSettings.maxUrls,

@@ -4,6 +4,7 @@ import { config } from '../config';
 import { getTaskStatus, putObject, putTaskStatus } from '../r2';
 import type { R2Overrides } from '../r2';
 import { buildR2Key } from '../utils/helpers';
+import { normalizeMaxConcurrency, runWithConcurrency } from './crawl-concurrency';
 import { scrapeUrl } from './crawler';
 
 export interface CrawlJobPayload {
@@ -22,6 +23,7 @@ export interface CrawlJobPayload {
     urlExtractorBaseUrl?: string;
     urlExtractorModel?: string;
     urlExtractorPrompt?: string;
+    maxConcurrency?: number;
     maxRetries?: number;
     urlTimeout?: number;
     r2AccountId?: string;
@@ -225,7 +227,9 @@ export async function processCrawlJob(message: CrawlJobPayload, metadata: CrawlJ
 }
 
 export async function processCrawlJobsInline(jobs: CrawlJobPayload[]): Promise<void> {
-  for (const job of jobs) {
+  const concurrency = normalizeMaxConcurrency(jobs[0]?.engineSettings?.maxConcurrency);
+
+  await runWithConcurrency(jobs, concurrency, async (job) => {
     let deliveryCount = 1;
 
     while (true) {
@@ -244,7 +248,7 @@ export async function processCrawlJobsInline(jobs: CrawlJobPayload[]): Promise<v
         deliveryCount += 1;
       }
     }
-  }
+  });
 }
 
 export function getCrawlRetryDirective(error: unknown, deliveryCount: number) {

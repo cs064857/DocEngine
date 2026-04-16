@@ -5,6 +5,7 @@ import { checkCrawlJob, startCrawlJob } from '@/lib/services/crawler';
 import { downloadSingleFile, downloadFolderAsZip } from '@/lib/utils/download';
 import { buildR2Key } from '@/lib/utils/helpers';
 import { formatStoredDate, getTaskDisplayDate } from '@/lib/utils/task-metadata';
+import { shouldAutoOpenTaskDrawer } from '@/lib/utils/task-progress-drawer';
 
 import type { SkillTaskStatus } from '@/app/api/generate-skill/route';
 
@@ -166,6 +167,7 @@ export default function DocEngineFrontend() {
 
   // Task Progress Drawer 狀態
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [autoOpenedTaskId, setAutoOpenedTaskId] = useState<string | null>(null);
   const [retryingUrls, setRetryingUrls] = useState<Set<string>>(new Set());
   const [abortingUrls, setAbortingUrls] = useState<Set<string>>(new Set());
   const [isDownloading, setIsDownloading] = useState(false);
@@ -511,10 +513,11 @@ export default function DocEngineFrontend() {
 
   // 當 taskId 被設定時自動打開 Drawer
   useEffect(() => {
-    if (taskId && (!taskStatus || taskStatus.status === 'processing')) {
+    if (shouldAutoOpenTaskDrawer({ taskId, autoOpenedTaskId, taskStatus })) {
       setDrawerOpen(true);
+      setAutoOpenedTaskId(taskId);
     }
-  }, [taskId, taskStatus]);
+  }, [taskId, autoOpenedTaskId, taskStatus]);
 
   // Fetch History Tasks
   useEffect(() => {
@@ -578,6 +581,7 @@ export default function DocEngineFrontend() {
     try {
       const engineSettings = {
         maxUrls,
+        maxConcurrency: maxConcurrency ? Number.parseInt(maxConcurrency, 10) || undefined : undefined,
         maxRetries,
         urlTimeout: urlTimeout ? parseInt(urlTimeout) : undefined,
         enableClean,
@@ -870,6 +874,7 @@ export default function DocEngineFrontend() {
         llmBaseUrl: llmBaseUrl || undefined,
         cleaningPrompt: cleaningPrompt !== DEFAULT_CLEANING_PROMPT ? cleaningPrompt : undefined,
         enableClean,
+        maxConcurrency: maxConcurrency ? Number.parseInt(maxConcurrency, 10) || undefined : undefined,
         r2AccountId: r2AccountId || undefined,
         r2AccessKeyId: r2AccessKeyId || undefined,
         r2SecretAccessKey: r2SecretAccessKey || undefined,
@@ -889,7 +894,7 @@ export default function DocEngineFrontend() {
         return next;
       });
     }
-  }, [taskId, retryingUrls, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
+  }, [taskId, retryingUrls, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, maxConcurrency, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
 
   const handleRetryAllFailed = useCallback(async () => {
     if (!taskId || !taskStatus?.urls) return;
@@ -904,6 +909,7 @@ export default function DocEngineFrontend() {
         llmBaseUrl: llmBaseUrl || undefined,
         cleaningPrompt: cleaningPrompt !== DEFAULT_CLEANING_PROMPT ? cleaningPrompt : undefined,
         enableClean,
+        maxConcurrency: maxConcurrency ? Number.parseInt(maxConcurrency, 10) || undefined : undefined,
         r2AccountId: r2AccountId || undefined,
         r2AccessKeyId: r2AccessKeyId || undefined,
         r2SecretAccessKey: r2SecretAccessKey || undefined,
@@ -919,7 +925,7 @@ export default function DocEngineFrontend() {
     } finally {
       setRetryingUrls(new Set());
     }
-  }, [taskId, taskStatus, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
+  }, [taskId, taskStatus, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, maxConcurrency, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
 
   const handleRetryTask = useCallback(async () => {
     if (!taskId || !taskStatus?.urls || taskStatus.urls.length === 0) return;
@@ -934,6 +940,7 @@ export default function DocEngineFrontend() {
         llmBaseUrl: llmBaseUrl || undefined,
         cleaningPrompt: cleaningPrompt !== DEFAULT_CLEANING_PROMPT ? cleaningPrompt : undefined,
         enableClean,
+        maxConcurrency: maxConcurrency ? Number.parseInt(maxConcurrency, 10) || undefined : undefined,
         r2AccountId: r2AccountId || undefined,
         r2AccessKeyId: r2AccessKeyId || undefined,
         r2SecretAccessKey: r2SecretAccessKey || undefined,
@@ -949,7 +956,7 @@ export default function DocEngineFrontend() {
     } finally {
       setRetryingUrls(new Set());
     }
-  }, [taskId, taskStatus, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
+  }, [taskId, taskStatus, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, maxConcurrency, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
 
   // 輔助函式：將異常或 0B 的檔案標示為失敗，以便重試
   const markKeysAsFailed = (failedList: { key: string, reason: string }[]) => {
@@ -1669,7 +1676,7 @@ export default function DocEngineFrontend() {
                     {/* Concurrency & URL Cap */}
                     <div className="space-y-6">
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Max Vercel Concurrency</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Max Task Concurrency</label>
                         <div className="flex items-center space-x-3">
                           <input
                             type="range"
@@ -1679,9 +1686,9 @@ export default function DocEngineFrontend() {
                             onChange={(e) => setMaxConcurrency(e.target.value)}
                             className="w-full appearance-none bg-transparent"
                           />
-                          <span className="text-sm font-medium text-gray-700 w-6">{maxConcurrency}.0</span>
+                          <span className="text-sm font-medium text-gray-700 w-6">{maxConcurrency}</span>
                         </div>
-                        <p className="text-[10px] text-gray-500 mt-1">Warning: High concurrency triggers proxy Rate Limiting</p>
+                        <p className="text-[10px] text-gray-500 mt-1">Controls inline or fallback batch workers. Queue workers still follow the platform cap.</p>
                       </div>
 
                       <div>
