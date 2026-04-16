@@ -1,0 +1,704 @@
+{
+  "language": "zh-TW",
+  "max_topics": 30,
+  "topic_count": 30,
+  "repository_type": "single-project",
+  "project_boundaries": [
+    {
+      "name": "主應用：crawldocs-web",
+      "path": ".",
+      "kind": "Next.js App Router 單專案",
+      "notes": [
+        "唯一 package.json 位於根目錄，無其他可執行子專案 manifest。",
+        "skill-creator/ 是 Skill 生成參考資源，不是獨立執行服務。"
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "name": "入門與邊界",
+      "topics": [
+        {
+          "title": "專案總覽與唯一子專案邊界",
+          "doc_type": "overview",
+          "audience": "beginner",
+          "scope_hints": [
+            "README.md",
+            "package.json",
+            "next.config.ts",
+            "app/layout.tsx",
+            "app/page.tsx",
+            "skill-creator/（參考資源，不是獨立執行專案）"
+          ],
+          "must_include": [
+            "這是 Next.js 16 App Router 單專案，而非 monorepo。",
+            "主功能是 Firecrawl 抓取、LLM 清洗、R2 儲存與 Skill 生成。",
+            "主要執行入口是 app/page.tsx 與 app/api/* 路由。",
+            "next.config.ts 對 @vercel/queue 與 @mariozechner/pi-ai 做了 serverExternalPackages 設定。"
+          ],
+          "avoid": [
+            "不要展開各 API 的內部實作細節。",
+            "不要逐一介紹每個頁籤的 UI 控件。",
+            "不要深入測試案例。"
+          ]
+        },
+        {
+          "title": "執行環境、部署方式與設定來源",
+          "doc_type": "config",
+          "audience": "beginner",
+          "scope_hints": [
+            ".env.example",
+            "lib/config.ts",
+            "Dockerfile",
+            "docker-compose.yml",
+            "vercel.json",
+            "tsconfig.json",
+            "eslint.config.mjs"
+          ],
+          "must_include": [
+            "環境變數預設值與 lib/config.ts 的集中設定來源。",
+            "Docker 與 Vercel 兩種部署假設。",
+            "PI_AUTH_JSON_PATH 與 auth.json 掛載位置。",
+            "TypeScript alias 與 Next.js server 設定對專案的影響。"
+          ],
+          "avoid": [
+            "不要把這頁寫成業務流程總覽。",
+            "不要重複前端互動流程。",
+            "不要深入單一 API handler 的商業邏輯。"
+          ]
+        },
+        {
+          "title": "任務資料模型、日期格式與 R2 路徑規則",
+          "doc_type": "architecture",
+          "audience": "intermediate",
+          "scope_hints": [
+            "lib/r2.ts",
+            "lib/utils/helpers.ts",
+            "lib/utils/task-metadata.ts"
+          ],
+          "must_include": [
+            "JobTask 與 SkillTask 相關欄位的職責。",
+            "YYYYMMDD date 與 createdAt/updatedAt 的雙軌日期設計。",
+            "raw/、cleaned/、tasks/、skill-tasks/、skills/ 的 key 命名規則。",
+            "sanitizeEngineSettingsForStorage 與 mergeStoredTaskEngineSettingsForRetry 的用途。"
+          ],
+          "avoid": [
+            "不要重複各 API handler 的流程。",
+            "不要講前端版面呈現。",
+            "不要展開 ZIP 下載細節。"
+          ]
+        }
+      ],
+      "groups": []
+    },
+    {
+      "name": "前端控制台",
+      "topics": [],
+      "groups": [
+        {
+          "name": "全域狀態與建立流程",
+          "topics": [
+            {
+              "title": "單頁主控台的狀態樹與本地設定還原",
+              "doc_type": "ui-architecture",
+              "audience": "intermediate",
+              "scope_hints": [
+                "app/page.tsx（約 92-565 行）"
+              ],
+              "must_include": [
+                "activeTab、sourceType 與多組 useState 的分工。",
+                "docengineConfig 的 localStorage 還原流程。",
+                "task/status/skill 輪詢與 useEffect 副作用。",
+                "R2 覆蓋設定如何在前端狀態中被重複使用。"
+              ],
+              "avoid": [
+                "不要重複後端 API 的實作。",
+                "不要描述大量 JSX 樣式細節。",
+                "不要重複下載與重試按鈕的操作說明。"
+              ]
+            },
+            {
+              "title": "建立頁的三種模式：Scrape、Crawl、Map",
+              "doc_type": "workflow",
+              "audience": "beginner",
+              "scope_hints": [
+                "app/page.tsx（約 566-828 行）",
+                "app/page.tsx（約 1120-1788 行）"
+              ],
+              "must_include": [
+                "handleSubmit、handleMapFetch、handleScrape、handleCrawl 的分流關係。",
+                "單一 URL 與多 URL / sitemap 的判斷邏輯。",
+                "Map 結果如何回填 inputValue。",
+                "Crawl Job 探索完成後如何轉交批次 task。"
+              ],
+              "avoid": [
+                "不要深入 route.ts 細節。",
+                "不要重複 Skill 分頁流程。",
+                "不要重複 task drawer 監控內容。"
+              ]
+            },
+            {
+              "title": "單頁 Scrape 的即時預覽與任務同步",
+              "doc_type": "workflow",
+              "audience": "intermediate",
+              "scope_hints": [
+                "app/page.tsx（約 676-756 行）",
+                "app/api/scrape/route.ts",
+                "lib/services/scrape-task.ts"
+              ],
+              "must_include": [
+                "單頁 scrape 仍會回傳 markdown / cleanedMarkdown 預覽。",
+                "成功與失敗時如何條件式設置 taskId/taskStatus。",
+                "saveToR2 與 enableClean 對回傳資料的影響。",
+                "單頁 scrape 現在也會建立 tasks/ 任務記錄。"
+              ],
+              "avoid": [
+                "不要展開批次 queue pipeline。",
+                "不要重複 task 歷史列表 UI。",
+                "不要深入 R2 client 建構細節。"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "監控、設定與 Skill 介面",
+          "topics": [
+            {
+              "title": "Skill Generator 分頁的互動流",
+              "doc_type": "ui-flow",
+              "audience": "intermediate",
+              "scope_hints": [
+                "app/page.tsx（約 1791-2363 行）"
+              ],
+              "must_include": [
+                "OAuth / API key 兩種驗證模式。",
+                "Provider/Model 載入、自訂 model/baseUrl 與 test-llm 檢查。",
+                "cleaned folder 選取、custom prompt、提交、輪詢、下載。",
+                "歷史版本的 retry 與 download 入口。"
+              ],
+              "avoid": [
+                "不要重複 skill 後端 pipeline 實作。",
+                "不要詳解 R2 SDK。",
+                "不要重複一般 task history。"
+              ]
+            },
+            {
+              "title": "Tasks 分頁與監控抽屜",
+              "doc_type": "ui-flow",
+              "audience": "intermediate",
+              "scope_hints": [
+                "app/page.tsx（約 521-550 行）",
+                "app/page.tsx（約 2710-3077 行）"
+              ],
+              "must_include": [
+                "歷史任務載入與列表摘要欄位。",
+                "drawer 的即時進度、URL 狀態與統計。",
+                "單筆/整批 retry、abort、download、clean 動作入口。",
+                "檔案大小刷新與 0B 異常標示。"
+              ],
+              "avoid": [
+                "不要重複 crawl-dispatch 內部狀態更新。",
+                "不要重複 R2 key 命名規則。",
+                "不要深入 skill history UI。"
+              ]
+            },
+            {
+              "title": "Storage 與 Settings 分頁",
+              "doc_type": "ui-reference",
+              "audience": "beginner",
+              "scope_hints": [
+                "app/page.tsx（約 2367-2707 行）"
+              ],
+              "must_include": [
+                "R2 自訂憑證輸入與 fallback 說明。",
+                "Scraping Processor、LLM Cleaner、URL Extractor 三組設定。",
+                "可折疊 prompt 編輯區與 reset 行為。",
+                "前端如何透過 /api/test-llm 驗證連線。"
+              ],
+              "avoid": [
+                "不要把這頁寫成後端 config 文件。",
+                "不要重複 Skill Generator 控制流程。",
+                "不要展開下載 ZIP 行為。"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "爬取與任務 API",
+      "topics": [],
+      "groups": [
+        {
+          "name": "任務建立與派送",
+          "topics": [
+            {
+              "title": "Crawl API：從原始輸入建立批次任務",
+              "doc_type": "api",
+              "audience": "intermediate",
+              "scope_hints": [
+                "app/api/crawl/route.ts",
+                "lib/processors/url-extractor.ts",
+                "lib/utils/task-metadata.ts"
+              ],
+              "must_include": [
+                "input 驗證與 URL 提取。",
+                "maxUrls 限制與 summarizeDomains。",
+                "初始 JobTask 寫入 tasks/{taskId}.json。",
+                "dispatchCrawlJobs payload 組裝與 dispatchMode 回應。"
+              ],
+              "avoid": [
+                "不要深入單頁 scrape 任務。",
+                "不要重複 URL extractor 的內部解析細節。",
+                "不要展開 queue worker 執行細節。"
+              ]
+            },
+            {
+              "title": "Map API 與 Crawl Job API 的探索前置流程",
+              "doc_type": "api",
+              "audience": "intermediate",
+              "scope_hints": [
+                "app/api/map/route.ts",
+                "app/api/crawl-job/route.ts",
+                "lib/services/crawler.ts"
+              ],
+              "must_include": [
+                "Map API 直接呼叫 Firecrawl /v2/map。",
+                "Crawl Job POST/GET 啟動與輪詢 async crawl。",
+                "links 去重與前端 consume 方式。",
+                "HTTP 402/429 等 Firecrawl 錯誤轉譯。"
+              ],
+              "avoid": [
+                "不要重複 queue task 初始化。",
+                "不要重複 app/page 的 UI 控制。",
+                "不要展開 LLM 清洗。"
+              ]
+            },
+            {
+              "title": "Queue callback 與 dispatch fallback 策略",
+              "doc_type": "architecture",
+              "audience": "advanced",
+              "scope_hints": [
+                "app/api/queues/process-url/route.ts",
+                "lib/services/crawl-dispatch.ts（約 1-114 行）"
+              ],
+              "must_include": [
+                "handleCallback 與 retry directive 的接線方式。",
+                "canUseBackgroundQueue 的運行環境判斷。",
+                "queue 不可用時 inline / mixed fallback。",
+                "QueueRetryError 與 queue unavailable error 判斷。"
+              ],
+              "avoid": [
+                "不要重複單一 URL 處理細節。",
+                "不要展開 task 查詢 API。",
+                "不要把測試內容寫進主流程頁。"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "URL 工作執行與狀態修補",
+          "topics": [
+            {
+              "title": "單一 URL 工作：抓取、清洗、儲存、更新任務",
+              "doc_type": "workflow",
+              "audience": "advanced",
+              "scope_hints": [
+                "lib/services/crawl-dispatch.ts（約 129-327 行）",
+                "lib/services/crawler.ts",
+                "lib/processors/cleaner.ts"
+              ],
+              "must_include": [
+                "markUrlProcessing 與 withTimeout。",
+                "scrapeUrl → put raw → cleanContent → put cleaned 的主鏈路。",
+                "success/failed/retryingUrls 如何寫回 JobTask。",
+                "最大重試次數與 exponential retry delay。"
+              ],
+              "avoid": [
+                "不要重複任務建立步驟。",
+                "不要重複前端 drawer UI。",
+                "不要深入 R2 client 建構。"
+              ]
+            },
+            {
+              "title": "單頁 Scrape 任務服務",
+              "doc_type": "service",
+              "audience": "intermediate",
+              "scope_hints": [
+                "app/api/scrape/route.ts",
+                "lib/services/scrape-task.ts"
+              ],
+              "must_include": [
+                "SingleScrapeTaskInput 解析與數值/tag 正規化。",
+                "processing → completed/failed 任務生命週期。",
+                "saveToR2 / enableClean 對輸出與 task 的影響。",
+                "API 回傳 taskId/task 與預覽資料。"
+              ],
+              "avoid": [
+                "不要重複批次 queue fallback。",
+                "不要展開 Skill 生成。",
+                "不要重複前端按鈕呈現。"
+              ]
+            },
+            {
+              "title": "Retry API：局部重試與整批重跑",
+              "doc_type": "api",
+              "audience": "intermediate",
+              "scope_hints": [
+                "app/api/retry/route.ts",
+                "lib/utils/task-metadata.ts"
+              ],
+              "must_include": [
+                "retryAll 與 urls[] 兩種模式。",
+                "stored engine settings 與 runtime secrets 的合併。",
+                "failedUrls、retryingUrls、urls status 的重置方式。",
+                "重新派送後 dispatchMode 的回應語意。"
+              ],
+              "avoid": [
+                "不要重複 crawl worker 的成功路徑。",
+                "不要講 UI 按鈕外觀。",
+                "不要深入 R2 list/get 方法。"
+              ]
+            },
+            {
+              "title": "Abort API：人工終止卡住 URL",
+              "doc_type": "api",
+              "audience": "intermediate",
+              "scope_hints": [
+                "app/api/abort/route.ts"
+              ],
+              "must_include": [
+                "只接受 taskId + urls[]。",
+                "pending/processing URL 轉 failed 的規則。",
+                "User aborted 訊息與 failedUrls 累加。",
+                "completed + failed >= total 時的任務收斂。"
+              ],
+              "avoid": [
+                "不要重複 retry 流程。",
+                "不要解釋下載功能。",
+                "不要深入前端 state。"
+              ]
+            },
+            {
+              "title": "Task / Status / Files 查詢 API",
+              "doc_type": "api",
+              "audience": "intermediate",
+              "scope_hints": [
+                "app/api/status/[taskId]/route.ts",
+                "app/api/tasks/route.ts",
+                "app/api/files/route.ts"
+              ],
+              "must_include": [
+                "GET/POST 兩種 R2 覆蓋查詢模式。",
+                "tasks/ prefix 列表排序與 top-N 歷史。",
+                "domainSummary 補正 normalizeTask。",
+                "單檔內容讀取與 prefix 列表查詢。"
+              ],
+              "avoid": [
+                "不要重複 task 建立與執行。",
+                "不要深入 ZIP 打包邏輯。",
+                "不要重複前端 task drawer。"
+              ]
+            },
+            {
+              "title": "Clean API：針對既有 raw 檔案重新清洗",
+              "doc_type": "api",
+              "audience": "intermediate",
+              "scope_hints": [
+                "app/api/clean/route.ts",
+                "lib/processors/cleaner.ts",
+                "lib/utils/helpers.ts"
+              ],
+              "must_include": [
+                "buildR2Key 對 raw/cleaned key 的映射。",
+                "從 raw 檔取回後再呼叫 cleanContent。",
+                "LLM 失敗時 502 與錯誤訊息傳播。",
+                "成功回傳 cleaned size，供前端局部補清洗。"
+              ],
+              "avoid": [
+                "不要重複批次 queue 主流程。",
+                "不要描述前端 settings 頁。",
+                "不要展開 ZIP download。"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Skill 生成 API 與管線",
+      "topics": [],
+      "groups": [
+        {
+          "name": "後端任務與查詢端點",
+          "topics": [
+            {
+              "title": "Generate Skill API：建立版本化 skill 任務",
+              "doc_type": "api",
+              "audience": "intermediate",
+              "scope_hints": [
+                "app/api/generate-skill/route.ts（約 1-244 行）",
+                "lib/utils/task-metadata.ts"
+              ],
+              "must_include": [
+                "skill-tasks/{taskId}.json 初始內容。",
+                "cleaned/{date}/{domain}/ 存在性檢查。",
+                "outputPrefix 的 versioned 目錄策略。",
+                "fire-and-forget 背景 processSkillGeneration 啟動方式。"
+              ],
+              "avoid": [
+                "不要重複前端提交表單。",
+                "不要深入三階段 prompt 細節。",
+                "不要重複下載 ZIP 實作。"
+              ]
+            },
+            {
+              "title": "Skill 狀態、歷史與下載 API",
+              "doc_type": "api",
+              "audience": "intermediate",
+              "scope_hints": [
+                "app/api/skill-status/[taskId]/route.ts",
+                "app/api/skill-tasks/route.ts",
+                "app/api/skill-download/route.ts"
+              ],
+              "must_include": [
+                "skill task 查詢與最近歷史列表。",
+                "versionedPrefix 與 legacy prefix fallback。",
+                "ZIP 打包 skills/... 產物與 references/。",
+                "R2 覆蓋憑證傳遞方式。"
+              ],
+              "avoid": [
+                "不要重複 cleaned folder 探索。",
+                "不要深入 LLM 生成 prompt。",
+                "不要講前端按鈕流程。"
+              ]
+            },
+            {
+              "title": "cleaned 資料夾索引 API",
+              "doc_type": "api",
+              "audience": "beginner",
+              "scope_hints": [
+                "app/api/list-cleaned-folders/route.ts"
+              ],
+              "must_include": [
+                "從 cleaned/{date}/{domain}/ 結構解析唯一資料夾。",
+                "fileCount 與 emptyFileCount 計算。",
+                "最新日期排序。",
+                "作為 Skill Generator folder picker 的資料來源。"
+              ],
+              "avoid": [
+                "不要重複 skill task 狀態管理。",
+                "不要重複 R2 client 實作。",
+                "不要講 UI 驗證細節。"
+              ]
+            },
+            {
+              "title": "pi-ai registry 與 Codex OAuth 端點",
+              "doc_type": "api",
+              "audience": "intermediate",
+              "scope_hints": [
+                "app/api/pi-models/route.ts",
+                "app/api/codex-auth/route.ts",
+                "lib/oauth/pi-auth.ts"
+              ],
+              "must_include": [
+                "Provider/model registry 包裝與 openai-compatible 追加 provider。",
+                "Codex auth status 檢查 API。",
+                "auth.json 路徑解析與 runtime cwd。",
+                "token refresh 後寫回 auth.json 的機制。"
+              ],
+              "avoid": [
+                "不要重複完整 pi-llm complete 邏輯。",
+                "不要展開 Skill Generator 三階段 pipeline。",
+                "不要重複 Docker 掛載設定。"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "生成核心",
+          "topics": [
+            {
+              "title": "Skill Generator 核心：收集、摘要、生成、精修",
+              "doc_type": "workflow",
+              "audience": "advanced",
+              "scope_hints": [
+                "lib/processors/skill-generator.ts",
+                "lib/prompts/skill-generator.ts",
+                "skill-creator/SKILL.md"
+              ],
+              "must_include": [
+                "從 R2 讀取 cleaned markdown 的收集流程。",
+                "summary / generate / refine 三階段 prompt 的輸入輸出。",
+                "skill-creator 指南片段如何注入 system prompt。",
+                "SKILL.md normalization 與 frontmatter 驗證。"
+              ],
+              "avoid": [
+                "不要重複 API handler 任務建立。",
+                "不要詳述前端操作。",
+                "不要重複 R2 prefix 命名基本概念。"
+              ]
+            },
+            {
+              "title": "pi-llm 與 OpenAI-compatible / Codex 呼叫橋接",
+              "doc_type": "service",
+              "audience": "advanced",
+              "scope_hints": [
+                "lib/services/pi-llm.ts",
+                "lib/oauth/pi-auth.ts"
+              ],
+              "must_include": [
+                "provider/model 驗證與 fallback custom model 建構。",
+                "openai-codex 未帶 apiKey 時的 token 取得。",
+                "baseUrl override 如何注入 model。",
+                "response content 解析與 stopReason error handling。"
+              ],
+              "avoid": [
+                "不要重複 pi-models API 清單輸出。",
+                "不要重複 skill task lifecycle。",
+                "不要講一般 chatCompletion client。"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "共用服務、工具與驗證",
+      "topics": [],
+      "groups": [
+        {
+          "name": "底層服務",
+          "topics": [
+            {
+              "title": "Firecrawl wrapper：scrape、advanced scrape 與 async crawl",
+              "doc_type": "service",
+              "audience": "intermediate",
+              "scope_hints": [
+                "lib/services/crawler.ts"
+              ],
+              "must_include": [
+                "lazy singleton FirecrawlApp 與 override signature。",
+                "scrapeUrl、scrapeUrlAdvanced、startCrawlJob、checkCrawlJob 四個入口。",
+                "advanced options 到 Firecrawl params 的映射。",
+                "錯誤轉譯與 markdown/metadata 輸出。"
+              ],
+              "avoid": [
+                "不要重複 queue worker 的 task update。",
+                "不要重複前端 UI 控制。",
+                "不要展開 Map API 的 HTTP error translation。"
+              ]
+            },
+            {
+              "title": "URL Extractor：純 URL、sitemap、LLM 三段式解析",
+              "doc_type": "service",
+              "audience": "intermediate",
+              "scope_hints": [
+                "lib/processors/url-extractor.ts"
+              ],
+              "must_include": [
+                "換行/逗號切分與 allAreUrls 快速路徑。",
+                "sitemapindex 遞迴抓取 child sitemap。",
+                "LLM JSON object 輸出要求。",
+                "失敗時空陣列 fallback 與去重。"
+              ],
+              "avoid": [
+                "不要重複 Crawl API 建 task。",
+                "不要講前端 settings 控件。",
+                "不要深入 llm.ts HTTP client。"
+              ]
+            },
+            {
+              "title": "Cleaner 與 OpenAI-compatible chat client",
+              "doc_type": "service",
+              "audience": "intermediate",
+              "scope_hints": [
+                "lib/processors/cleaner.ts",
+                "lib/services/llm.ts",
+                "CLEANING_PROMPT.md",
+                "URL_EXTRACTOR_PROMPT.md"
+              ],
+              "must_include": [
+                "DEFAULT_CLEANING_PROMPT 的角色與覆寫方式。",
+                "chatCompletion 的 /chat/completions endpoint 正規化。",
+                "重試/backoff 與 responseFormat=json_object 支援。",
+                "LLM 回空內容時拋錯讓上層決策。"
+              ],
+              "avoid": [
+                "不要重複 pi-llm provider registry。",
+                "不要重複整個 skill pipeline。",
+                "不要講 task history UI。"
+              ]
+            },
+            {
+              "title": "R2 存取層與 JSON 持久化",
+              "doc_type": "storage",
+              "audience": "intermediate",
+              "scope_hints": [
+                "lib/r2.ts"
+              ],
+              "must_include": [
+                "default client 與 override client 的解析邏輯。",
+                "put/get/list object 封裝。",
+                "putTaskStatus/getTaskStatus 對 tasks/ 前綴的約定。",
+                "缺少 R2 credentials 時的錯誤語意。"
+              ],
+              "avoid": [
+                "不要重複 ZIP 前端下載流程。",
+                "不要重複特定 API handler 邏輯。",
+                "不要詳述 task-metadata utility 演算法。"
+              ]
+            },
+            {
+              "title": "共用工具：helpers、task-metadata、download",
+              "doc_type": "reference",
+              "audience": "intermediate",
+              "scope_hints": [
+                "lib/utils/helpers.ts",
+                "lib/utils/task-metadata.ts",
+                "lib/utils/download.ts"
+              ],
+              "must_include": [
+                "R2 key 命名與日期工具。",
+                "task 顯示日期、domainSummary、versioned skill prefix。",
+                "去敏與 retry merge utility。",
+                "前端 ZIP 下載的並發、0B 過濾與 error log。"
+              ],
+              "avoid": [
+                "不要重複 R2 SDK client 建構。",
+                "不要重複 API 路由功能。",
+                "不要展開 JSX UI 細節。"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "驗證",
+          "topics": [
+            {
+              "title": "測試覆蓋與近期回歸重點",
+              "doc_type": "testing",
+              "audience": "intermediate",
+              "scope_hints": [
+                "tests/crawl-dispatch.test.ts",
+                "tests/scrape-task.test.ts",
+                "tests/task-metadata.test.ts"
+              ],
+              "must_include": [
+                "queue 不可用時 inline/mixed fallback 測試。",
+                "single scrape task 成功/失敗生命週期測試。",
+                "task metadata 去敏與 prefix/version 規則測試。",
+                "這些測試與近期 queue fallback、single scrape task 修復的對應關係。"
+              ],
+              "avoid": [
+                "不要把測試頁寫成完整實作說明。",
+                "不要重複每個被測函式主流程。",
+                "不要講部署或 UI 版面。"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
