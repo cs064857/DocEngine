@@ -4,6 +4,10 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { checkCrawlJob, startCrawlJob } from '@/lib/services/crawler';
 import { downloadSingleFile, downloadFolderAsZip } from '@/lib/utils/download';
 import { buildR2Key } from '@/lib/utils/helpers';
+import {
+  getAdvancedEngineSettingsHint,
+  shouldShowAdvancedEngineSettings,
+} from '@/lib/utils/advanced-engine-settings-ui';
 import { formatStoredDate, getTaskDisplayDate } from '@/lib/utils/task-metadata';
 import { shouldAutoOpenTaskDrawer } from '@/lib/utils/task-progress-drawer';
 
@@ -94,6 +98,8 @@ export default function DocEngineFrontend() {
   const [activeTab, setActiveTab] = useState<'tasks' | 'create' | 'skill' | 'storage' | 'settings'>('create');
   const [sourceType, setSourceType] = useState<'scrape' | 'crawl' | 'map'>('scrape');
   const [inputValue, setInputValue] = useState('');
+
+  const advancedEngineSettingsHint = getAdvancedEngineSettingsHint(sourceType);
 
   // Advanced parameters
   const [depthLimit, setDepthLimit] = useState('0');
@@ -1663,12 +1669,17 @@ export default function DocEngineFrontend() {
               </div>
             )}
 
-            {/* Advanced Settings — 僅在非 scrape 模式下顯示 */}
-            {sourceType !== 'scrape' && (
+            {/* Advanced Settings */}
+            {shouldShowAdvancedEngineSettings(sourceType) && (
               <>
                 <div className="bg-[#F8F5EE] rounded-2xl p-6 border border-[#E5D5C5]">
                   <div className="flex justify-between items-center mb-6 cursor-pointer">
-                    <h2 className="text-lg font-semibold text-gray-800">Advanced Engine Settings</h2>
+                    <div>
+                      <h2 className="text-lg font-semibold text-gray-800">Advanced Engine Settings</h2>
+                      {advancedEngineSettingsHint && (
+                        <p className="text-[10px] text-gray-500 mt-1">{advancedEngineSettingsHint}</p>
+                      )}
+                    </div>
                     <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 15l7-7 7 7"></path></svg>
                   </div>
 
