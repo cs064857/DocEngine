@@ -11,7 +11,11 @@ import {
 import { formatStoredDate, getTaskDisplayDate } from '@/lib/utils/task-metadata';
 import { shouldAutoOpenTaskDrawer } from '@/lib/utils/task-progress-drawer';
 
-import type { SkillTaskStatus } from '@/app/api/generate-skill/route';
+import {
+  isSkillTaskStoppable,
+  isSkillTaskTerminalStatus,
+  type SkillTaskStatus,
+} from '@/lib/utils/skill-task-status';
 
 // pi-ai Provider/Model Registry（由 /api/pi-models 提供）
 interface PiModelInfo {
@@ -220,6 +224,7 @@ export default function DocEngineFrontend() {
   const [isSkillHistoryLoading, setIsSkillHistoryLoading] = useState(false);
   const [retryingSkillTaskIds, setRetryingSkillTaskIds] = useState<Set<string>>(new Set());
   const [downloadingSkillTaskIds, setDownloadingSkillTaskIds] = useState<Set<string>>(new Set());
+  const [stoppingSkillTaskIds, setStoppingSkillTaskIds] = useState<Set<string>>(new Set());
   const skillPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Hydration state for localStorage
@@ -276,7 +281,7 @@ export default function DocEngineFrontend() {
         }
         setSkillStatus(statusData);
 
-        if (statusData.status === 'completed' || statusData.status === 'failed') {
+        if (isSkillTaskTerminalStatus(statusData.status)) {
           if (skillPollRef.current) clearInterval(skillPollRef.current);
           await loadSkillHistory();
         }
@@ -288,6 +293,47 @@ export default function DocEngineFrontend() {
     await poll();
     skillPollRef.current = setInterval(poll, 3000);
   }, [loadSkillHistory, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
+
+  const stopSkillGeneration = useCallback(async (taskId: string) => {
+    setSkillError('');
+    setStoppingSkillTaskIds((prev) => new Set(prev).add(taskId));
+
+    try {
+      const res = await fetch('/api/abort-skill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId,
+          r2AccountId,
+          r2AccessKeyId,
+          r2SecretAccessKey,
+          r2BucketName,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to stop skill generation');
+      }
+
+      if (skillTaskId === taskId) {
+        setSkillStatus(data);
+        if (skillPollRef.current) {
+          clearInterval(skillPollRef.current);
+        }
+      }
+
+      await loadSkillHistory();
+    } catch (err: unknown) {
+      setSkillError(err instanceof Error ? err.message : 'Failed to stop skill generation');
+    } finally {
+      setStoppingSkillTaskIds((prev) => {
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
+      });
+    }
+  }, [loadSkillHistory, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName, skillTaskId]);
 
   const submitSkillGeneration = useCallback(async (params: {
     date: string;
@@ -2174,13 +2220,25 @@ export default function DocEngineFrontend() {
                 <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-gray-700">Generation Progress</span>
-                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                      skillStatus.status === 'completed' ? 'bg-green-100 text-green-700'
-                      : skillStatus.status === 'failed' ? 'bg-red-100 text-red-700'
-                      : 'bg-yellow-100 text-yellow-700'
-                    }`}>
-                      {skillStatus.status}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {isSkillTaskStoppable(skillStatus.status) && (
+                        <button
+                          onClick={() => stopSkillGeneration(skillStatus.taskId)}
+                          disabled={stoppingSkillTaskIds.has(skillStatus.taskId)}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50"
+                        >
+                          {stoppingSkillTaskIds.has(skillStatus.taskId) ? 'Stopping...' : 'Stop'}
+                        </button>
+                      )}
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                        skillStatus.status === 'completed' ? 'bg-green-100 text-green-700'
+                        : skillStatus.status === 'failed' ? 'bg-red-100 text-red-700'
+                        : skillStatus.status === 'aborted' ? 'bg-gray-200 text-gray-700'
+                        : 'bg-yellow-100 text-yellow-700'
+                      }`}>
+                        {skillStatus.status}
+                      </span>
+                    </div>
                   </div>
 
                   {/* 三步進度指示器 */}
@@ -2285,10 +2343,11 @@ export default function DocEngineFrontend() {
                           <div className="min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${
-                                item.status === 'completed' ? 'bg-green-100 text-green-700'
-                                  : item.status === 'failed' ? 'bg-red-100 text-red-700'
-                                    : 'bg-yellow-100 text-yellow-700'
-                              }`}>
+                                 item.status === 'completed' ? 'bg-green-100 text-green-700'
+                                   : item.status === 'failed' ? 'bg-red-100 text-red-700'
+                                    : item.status === 'aborted' ? 'bg-gray-200 text-gray-700'
+                                     : 'bg-yellow-100 text-yellow-700'
+                               }`}>
                                 {item.status}
                               </span>
                               <span className="text-xs font-medium text-gray-700">{item.domain}</span>
@@ -2301,6 +2360,16 @@ export default function DocEngineFrontend() {
                           </div>
 
                           <div className="flex items-center gap-2 shrink-0">
+                            {isSkillTaskStoppable(item.status) && (
+                              <button
+                                onClick={() => stopSkillGeneration(item.taskId)}
+                                disabled={stoppingSkillTaskIds.has(item.taskId)}
+                                className="px-3 py-1.5 rounded-lg text-xs font-medium border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-50"
+                              >
+                                {stoppingSkillTaskIds.has(item.taskId) ? 'Stopping...' : 'Stop'}
+                              </button>
+                            )}
+
                             <button
                               onClick={async () => {
                                 setRetryingSkillTaskIds((prev) => new Set(prev).add(item.taskId));

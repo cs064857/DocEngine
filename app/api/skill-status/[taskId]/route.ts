@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getObject } from '@/lib/r2';
-import type { R2Overrides } from '@/lib/r2';
-import type { SkillTaskStatus } from '@/app/api/generate-skill/route';
+import { getSkillTaskStatus, extractSkillTaskR2Overrides } from '@/lib/services/skill-task-control';
 
 /**
  * POST /api/skill-status/[taskId]
@@ -17,19 +15,7 @@ export async function POST(
     const { taskId } = await params;
     const body = await req.json().catch(() => ({}));
 
-    // 提取 R2 覆蓋配置
-    const r2: R2Overrides | undefined =
-      body.r2AccountId || body.r2AccessKeyId || body.r2SecretAccessKey || body.r2BucketName
-        ? {
-            accountId: body.r2AccountId,
-            accessKeyId: body.r2AccessKeyId,
-            secretAccessKey: body.r2SecretAccessKey,
-            bucketName: body.r2BucketName,
-          }
-        : undefined;
-
-    const raw = await getObject(`skill-tasks/${taskId}.json`, r2);
-    const status: SkillTaskStatus = JSON.parse(raw);
+    const status = await getSkillTaskStatus(taskId, extractSkillTaskR2Overrides(body));
 
     return NextResponse.json(status);
   } catch (error: unknown) {

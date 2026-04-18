@@ -25,7 +25,7 @@ export interface SkillGenerationResult {
 }
 
 /** 進度回報函式 */
-export type ProgressCallback = (phase: string, detail: string) => void;
+export type ProgressCallback = (phase: string, detail: string) => void | Promise<void>;
 
 /** 單一文件內容摘要的最大字元數 */
 const MAX_CHARS_PER_FILE = 3000;
@@ -152,11 +152,15 @@ export async function generateSkill(params: {
   r2?: R2Overrides;
   customPrompt?: string;
   onProgress?: ProgressCallback;
+  signal?: AbortSignal;
+  throwIfAborted?: () => Promise<void>;
 }): Promise<SkillGenerationResult> {
-  const { date, domain, provider, modelId, apiKey, baseUrl, r2, customPrompt, onProgress } = params;
+  const { date, domain, provider, modelId, apiKey, baseUrl, r2, customPrompt, onProgress, signal, throwIfAborted } = params;
+
+  await throwIfAborted?.();
 
   // === Phase 0: 收集文件 ===
-  onProgress?.('collecting', '正在從 R2 讀取 cleaned 文件...');
+  await onProgress?.('collecting', '正在從 R2 讀取 cleaned 文件...');
   const prefix = `cleaned/${date}/${domain}/`;
   const fileKeys = await listAllMdFiles(prefix, r2);
 
@@ -164,12 +168,14 @@ export async function generateSkill(params: {
     throw new Error(`No cleaned MD files found at: ${prefix}`);
   }
 
-  onProgress?.('collecting', `找到 ${fileKeys.length} 個文件，正在讀取內容...`);
+  await onProgress?.('collecting', `找到 ${fileKeys.length} 個文件，正在讀取內容...`);
   const files = await readFiles(fileKeys, prefix, r2);
 
   if (files.length === 0) {
     throw new Error(`Failed to read any files from: ${prefix}`);
   }
+
+  await throwIfAborted?.();
 
   const fileList = buildFileList(files);
   const documentContents = buildDocumentContents(files);
@@ -178,7 +184,7 @@ export async function generateSkill(params: {
   const skillCreatorGuidance = await loadSkillCreatorGuidance();
 
   // === Phase 1: Summarize ===
-  onProgress?.('summarize', `正在分析 ${files.length} 份文檔...`);
+  await onProgress?.('summarize', `正在分析 ${files.length} 份文檔...`);
   const summarizePrompt = fillPromptTemplate(SUMMARIZE_DOCS_PROMPT, {
     fileList,
     documentContents,
@@ -189,15 +195,17 @@ export async function generateSkill(params: {
     modelId,
     apiKey,
     baseUrl,
+    signal,
     systemPrompt: 'You are a technical documentation analyst.',
     userPrompt: summarizePrompt,
     temperature: 0.3,
   });
 
-  onProgress?.('summarize', '文檔摘要完成');
+  await throwIfAborted?.();
+  await onProgress?.('summarize', '文檔摘要完成');
 
   // === Phase 2: Generate ===
-  onProgress?.('generate', '正在生成 SKILL.md 骨架...');
+  await onProgress?.('generate', '正在生成 SKILL.md 骨架...');
 
   const generateSystemPrompt = [
     'You are an expert at creating Antigravity/OpenCode skill documents.',
@@ -217,15 +225,17 @@ export async function generateSkill(params: {
     modelId,
     apiKey,
     baseUrl,
+    signal,
     systemPrompt: generateSystemPrompt,
     userPrompt: generatePrompt,
     temperature: 0.4,
   });
 
-  onProgress?.('generate', 'SKILL.md 骨架生成完成');
+  await throwIfAborted?.();
+  await onProgress?.('generate', 'SKILL.md 骨架生成完成');
 
   // === Phase 3: Refine ===
-  onProgress?.('refine', '正在校驗與精修...');
+  await onProgress?.('refine', '正在校驗與精修...');
   const refinePrompt = fillPromptTemplate(REFINE_SKILL_PROMPT, {
     skillDraft: skillDraft.text,
     fileList,
@@ -243,11 +253,13 @@ export async function generateSkill(params: {
     modelId,
     apiKey,
     baseUrl,
+    signal,
     systemPrompt: refineSystemPrompt,
     userPrompt: refinePrompt,
     temperature: 0.2,
   });
 
+  await throwIfAborted?.();
   const finalMarkdown = normalizeSkillMarkdown(finalSkillMd.text);
   if (!finalMarkdown || finalMarkdown.trim().length === 0) {
     throw new Error('LLM returned empty SKILL.md');
@@ -256,7 +268,7 @@ export async function generateSkill(params: {
     throw new Error('Invalid SKILL.md: missing YAML frontmatter. Output must start with `---`.');
   }
 
-  onProgress?.('refine', '校驗完成，SKILL.md 已就緒');
+  await onProgress?.('refine', '校驗完成，SKILL.md 已就緒');
 
   return {
     skillMd: finalMarkdown,

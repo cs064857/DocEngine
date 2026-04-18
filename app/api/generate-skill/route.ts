@@ -1,28 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listObjects, putObject, getObject } from '@/lib/r2';
-import type { R2Overrides } from '@/lib/r2';
 import { generateTaskId } from '@/lib/utils/helpers';
 import { buildSkillVersionPrefix } from '@/lib/utils/task-metadata';
 import { generateSkill } from '@/lib/processors/skill-generator';
+import {
+  extractSkillTaskR2Overrides,
+  isAbortError,
+  registerSkillTaskAbortController,
+  throwIfSkillTaskAborted,
+  unregisterSkillTaskAbortController,
+  updateSkillTaskStatus,
+} from '@/lib/services/skill-task-control';
 import { config } from '@/lib/config';
-
-export interface SkillTaskStatus {
-  taskId: string;
-  status: 'processing' | 'completed' | 'failed';
-  phase: 'queued' | 'collecting' | 'summarize' | 'generate' | 'refine' | 'writing' | 'done';
-  date: string;
-  domain: string;
-  fileCount: number;
-  skillPreview?: string;
-  error?: string;
-  createdAt: string;
-  updatedAt: string;
-  outputPrefix?: string;
-  provider?: string;
-  modelId?: string;
-  baseUrl?: string;
-  customPrompt?: string;
-}
+import { SKILL_TASK_ABORT_MESSAGE, type SkillTaskStatus } from '@/lib/utils/skill-task-status';
 
 export interface SkillJobPayload {
   taskId: string;
@@ -39,53 +29,21 @@ export interface SkillJobPayload {
   r2BucketName?: string;
 }
 
-function extractR2Overrides(payload: Pick<SkillJobPayload, 'r2AccountId' | 'r2AccessKeyId' | 'r2SecretAccessKey' | 'r2BucketName'>): R2Overrides | undefined {
-  if (!payload.r2AccountId && !payload.r2AccessKeyId && !payload.r2SecretAccessKey && !payload.r2BucketName) return undefined;
-  return {
-    accountId: payload.r2AccountId,
-    accessKeyId: payload.r2AccessKeyId,
-    secretAccessKey: payload.r2SecretAccessKey,
-    bucketName: payload.r2BucketName,
-  };
-}
-
-async function updateSkillTaskStatus(
-  taskId: string,
-  updates: Partial<SkillTaskStatus>,
-  r2?: R2Overrides
-) {
-  try {
-    const raw = await getObject(`skill-tasks/${taskId}.json`, r2);
-    const current: SkillTaskStatus = JSON.parse(raw);
-
-    const updated: SkillTaskStatus = {
-      ...current,
-      ...updates,
-      updatedAt: new Date().toISOString(),
-    };
-
-    await putObject(
-      `skill-tasks/${taskId}.json`,
-      JSON.stringify(updated, null, 2),
-      'application/json',
-      r2
-    );
-  } catch (error) {
-    console.error(`[Skill Worker] Failed to update task status for ${taskId}:`, error);
-  }
-}
-
 /**
  * 非阻塞異步任務處理 (Fire-and-Forget for Docker)
  */
 async function processSkillGeneration(payload: SkillJobPayload) {
   const { taskId, date, domain, customPrompt, provider, modelId, apiKey, baseUrl } = payload;
-  const r2 = extractR2Overrides(payload);
+  const r2 = extractSkillTaskR2Overrides(payload);
   const outputPrefix = buildSkillVersionPrefix(date, domain, taskId);
+  const abortController = new AbortController();
+  const ensureTaskNotAborted = async () => throwIfSkillTaskAborted(taskId, r2);
 
   console.log(`[Skill Worker] Processing task ${taskId}: ${domain} (${date})`);
+  registerSkillTaskAbortController(taskId, abortController);
 
   try {
+    await ensureTaskNotAborted();
     const resolvedProvider = provider || config.llm.skillGenerator.provider;
     const resolvedModelId = modelId || config.llm.skillGenerator.modelId;
 
@@ -105,8 +63,11 @@ async function processSkillGeneration(payload: SkillJobPayload) {
       baseUrl: resolvedBaseUrl,
       r2,
       customPrompt,
+      signal: abortController.signal,
+      throwIfAborted: ensureTaskNotAborted,
       onProgress: async (phase, detail) => {
         console.log(`[Skill Worker] Task ${taskId} - ${phase}: ${detail}`);
+        await ensureTaskNotAborted();
         await updateSkillTaskStatus(taskId, {
           phase: phase as SkillTaskStatus['phase'],
         }, r2);
@@ -114,7 +75,9 @@ async function processSkillGeneration(payload: SkillJobPayload) {
     });
 
     // === 寫入 R2 ===
+    await ensureTaskNotAborted();
     await updateSkillTaskStatus(taskId, { phase: 'writing' }, r2);
+    await ensureTaskNotAborted();
 
     // 寫入 SKILL.md
     await putObject(
@@ -128,6 +91,7 @@ async function processSkillGeneration(payload: SkillJobPayload) {
     // 複製 cleaned 文件到 references/
     const copyPromises = result.fileList.map(async (filename) => {
       try {
+        await ensureTaskNotAborted();
         const sourceKey = `cleaned/${date}/${domain}/${filename}`;
         const content = await getObject(sourceKey, r2);
         const destKey = `${outputPrefix}references/${filename}`;
@@ -141,6 +105,7 @@ async function processSkillGeneration(payload: SkillJobPayload) {
     console.log(`[Skill Worker] Copied ${result.fileList.length} files to references/`);
 
     // 更新任務狀態為完成
+    await ensureTaskNotAborted();
     await updateSkillTaskStatus(taskId, {
       status: 'completed',
       phase: 'done',
@@ -150,6 +115,17 @@ async function processSkillGeneration(payload: SkillJobPayload) {
 
     console.log(`[Skill Worker] Task ${taskId} completed successfully`);
   } catch (error: unknown) {
+    if (isAbortError(error)) {
+      console.log(`[Skill Worker] Task ${taskId} aborted`);
+      await updateSkillTaskStatus(taskId, {
+        status: 'aborted',
+        error: SKILL_TASK_ABORT_MESSAGE,
+      }, r2).catch((updateError) => {
+        console.error(`[Skill Worker] Failed to persist aborted status for ${taskId}:`, updateError);
+      });
+      return;
+    }
+
     console.error(`[Skill Worker] Task ${taskId} failed:`, error);
     const errMsg = error instanceof Error ? error.message : 'Unknown error';
 
@@ -157,6 +133,8 @@ async function processSkillGeneration(payload: SkillJobPayload) {
       status: 'failed',
       error: errMsg,
     }, r2);
+  } finally {
+    unregisterSkillTaskAbortController(taskId);
   }
 }
 
@@ -172,7 +150,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields: date, domain' }, { status: 400 });
     }
 
-    const r2 = extractR2Overrides(body);
+    const r2 = extractSkillTaskR2Overrides(body);
     const prefix = `cleaned/${date}/${domain}/`;
     const objects = await listObjects(prefix, 5, r2);
 

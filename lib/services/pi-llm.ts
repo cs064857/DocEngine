@@ -24,13 +24,14 @@ export interface PiCompleteParams {
   baseUrl?: string; // Optional custom endpoint
   temperature?: number;
   maxTokens?: number;
+  signal?: AbortSignal;
 }
 
 /**
  * 封裝 pi-mono 的 LLM 呼叫，處理 Token 動態刷新與提供者選擇
  */
 export async function piComplete(params: PiCompleteParams): Promise<{ text: string; usage?: AssistantMessage['usage'] }> {
-  const { provider, modelId, systemPrompt, userPrompt, temperature, maxTokens, baseUrl } = params;
+  const { provider, modelId, systemPrompt, userPrompt, temperature, maxTokens, baseUrl, signal } = params;
 
   let finalApiKey = params.apiKey;
 
@@ -98,6 +99,7 @@ export async function piComplete(params: PiCompleteParams): Promise<{ text: stri
     apiKey: finalApiKey,
     temperature: temperature ?? 0.7,
     maxTokens: maxTokens,
+    signal,
   };
 
   const context: Context = {
@@ -109,7 +111,13 @@ export async function piComplete(params: PiCompleteParams): Promise<{ text: stri
     const response: AssistantMessage = await complete(modelWithOverrides, context, completeOptions);
 
     // pi-ai 在串流錯誤時會回傳 stopReason=error 的 AssistantMessage（不會 throw）
-    if (response.stopReason === 'error' || response.stopReason === 'aborted') {
+    if (response.stopReason === 'aborted') {
+      const abortError = new Error('LLM request aborted');
+      abortError.name = 'AbortError';
+      throw abortError;
+    }
+
+    if (response.stopReason === 'error') {
       throw new Error(
         response.errorMessage || `LLM request failed (stopReason=${response.stopReason}, provider=${provider}, model=${modelId})`
       );
