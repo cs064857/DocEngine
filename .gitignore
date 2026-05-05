@@ -42,3 +42,4 @@ next-env.d.ts
 *.png
 ui-style-referance/
 .worktrees/
+.hermes/
