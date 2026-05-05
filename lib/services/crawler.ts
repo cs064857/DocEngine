@@ -1,5 +1,6 @@
 import FirecrawlApp from '@mendable/firecrawl-js';
 import { config } from '../config';
+import { FirecrawlKeyManager } from './firecrawl-key-manager';
 
 // Define overrides type
 export interface CrawlerOverrides {
@@ -7,25 +8,89 @@ export interface CrawlerOverrides {
   apiUrl?: string;
 }
 
-let firecrawlInstance: FirecrawlApp | null = null;
-let lastUsedConfigStr: string = '';
+const firecrawlInstances = new Map<string, FirecrawlApp>();
+const firecrawlKeyManagers = new Map<string, FirecrawlKeyManager>();
 
-function getFirecrawl(overrides?: CrawlerOverrides): FirecrawlApp {
-  const currentKey = overrides?.apiKey || config.firecrawl.apiKey || 'DUMMY_KEY';
+interface FirecrawlClientContext {
+  client: FirecrawlApp;
+  apiKey: string;
+}
+
+function getKeyManager(keys: string[]): FirecrawlKeyManager {
+  const managerSignature = JSON.stringify(keys);
+  let manager = firecrawlKeyManagers.get(managerSignature);
+  if (!manager) {
+    manager = new FirecrawlKeyManager({
+      keys,
+      keyRates: config.firecrawl.keyRates,
+      defaultRatePerMinute: config.firecrawl.defaultRatePerMinute,
+      rateLimitCooldownMs: config.firecrawl.rateLimitCooldownSeconds * 1000,
+    });
+    firecrawlKeyManagers.set(managerSignature, manager);
+  }
+
+  return manager;
+}
+
+function getManagedKeys(overrides?: CrawlerOverrides): string[] {
+  if (overrides?.apiKey) {
+    return [overrides.apiKey];
+  }
+
+  if (config.firecrawl.apiKeys.length > 0) {
+    return config.firecrawl.apiKeys;
+  }
+
+  return config.firecrawl.apiKey ? [config.firecrawl.apiKey] : [];
+}
+
+function isFirecrawlRateLimitError(error: unknown): boolean {
+  if (!error) {
+    return false;
+  }
+
+  if (typeof error === 'object') {
+    const candidate = error as { status?: unknown; statusCode?: unknown; code?: unknown; message?: unknown; error?: unknown };
+    if (candidate.status === 429 || candidate.statusCode === 429 || candidate.code === 429 || candidate.code === '429') {
+      return true;
+    }
+
+    const message = [candidate.message, candidate.error]
+      .filter((value): value is string => typeof value === 'string')
+      .join(' ');
+    if (/\b429\b|rate[_\s-]?limit|too many requests/i.test(message)) {
+      return true;
+    }
+  }
+
+  return /\b429\b|rate[_\s-]?limit|too many requests/i.test(String(error));
+}
+
+function reportRateLimitIfNeeded(apiKey: string, error: unknown, overrides?: CrawlerOverrides): void {
+  if (!isFirecrawlRateLimitError(error)) {
+    return;
+  }
+
+  getKeyManager(getManagedKeys(overrides)).reportRateLimit(apiKey);
+}
+
+function getFirecrawl(overrides?: CrawlerOverrides): FirecrawlClientContext {
+  const keyManager = getKeyManager(getManagedKeys(overrides));
+  const currentKey = keyManager.getNextKey();
   const currentUrl = overrides?.apiUrl || config.firecrawl.apiUrl;
   
   const configSignature = `${currentKey}-${currentUrl}`;
 
-  // Re-initialize if config signature changed or instance null
-  if (!firecrawlInstance || lastUsedConfigStr !== configSignature) {
+  let firecrawlInstance = firecrawlInstances.get(configSignature);
+  if (!firecrawlInstance) {
     const crawlerOptions = currentUrl
       ? { apiKey: currentKey, apiUrl: currentUrl }
       : { apiKey: currentKey };
-      
+       
     firecrawlInstance = new FirecrawlApp(crawlerOptions);
-    lastUsedConfigStr = configSignature;
+    firecrawlInstances.set(configSignature, firecrawlInstance);
   }
-  return firecrawlInstance;
+  return { client: firecrawlInstance, apiKey: currentKey };
 }
 
 /**
@@ -37,12 +102,17 @@ export async function scrapeUrl(url: string, overrides?: CrawlerOverrides): Prom
   const firecrawl = getFirecrawl(overrides);
 
   // Notice we only scrape for markdown format, as per the Python original
-  const scrapeResult = await firecrawl.scrapeUrl(url, {
-    formats: ['markdown'],
-    timeout: 60000, // 增加 timeout 到 60 秒以防 408 錯誤
-  });
+  const scrapeResult = await firecrawl.client.scrapeUrl(url, {
+      formats: ['markdown'],
+      timeout: 60000, // 增加 timeout 到 60 秒以防 408 錯誤
+    })
+    .catch((error: unknown) => {
+      reportRateLimitIfNeeded(firecrawl.apiKey, error, overrides);
+      throw error;
+    });
 
   if (!scrapeResult.success) {
+    reportRateLimitIfNeeded(firecrawl.apiKey, scrapeResult.error, overrides);
     if (scrapeResult.error) {
       throw new Error(`Scrape failed: ${scrapeResult.error}`);
     }
@@ -92,9 +162,14 @@ export async function scrapeUrlAdvanced(
   if (options?.includeTags && options.includeTags.length > 0) scrapeParams.includeTags = options.includeTags;
   if (options?.excludeTags && options.excludeTags.length > 0) scrapeParams.excludeTags = options.excludeTags;
 
-  const scrapeResult = await firecrawl.scrapeUrl(url, scrapeParams);
+  const scrapeResult = await firecrawl.client.scrapeUrl(url, scrapeParams)
+    .catch((error: unknown) => {
+      reportRateLimitIfNeeded(firecrawl.apiKey, error, overrides);
+      throw error;
+    });
 
   if (!scrapeResult.success) {
+    reportRateLimitIfNeeded(firecrawl.apiKey, scrapeResult.error, overrides);
     if (scrapeResult.error) {
       throw new Error(`Scrape failed: ${scrapeResult.error}`);
     }
@@ -115,15 +190,20 @@ export async function startCrawlJob(url: string, limit: number = 100, overrides?
   
   const firecrawl = getFirecrawl(overrides);
 
-  const crawlResponse = await firecrawl.asyncCrawlUrl(url, {
-    limit,
-    scrapeOptions: {
-      formats: ['links'], // 我們只需要 links 來放入 queue 中處理
-    }
-  });
+  const crawlResponse = await firecrawl.client.asyncCrawlUrl(url, {
+      limit,
+      scrapeOptions: {
+        formats: ['links'], // 我們只需要 links 來放入 queue 中處理
+      }
+    })
+    .catch((error: unknown) => {
+      reportRateLimitIfNeeded(firecrawl.apiKey, error, overrides);
+      throw error;
+    });
 
   if (!crawlResponse.success) {
     const err = crawlResponse as { error?: string };
+    reportRateLimitIfNeeded(firecrawl.apiKey, err.error, overrides);
     throw new Error(`Crawl job start failed: ${err.error || 'Unknown error'}`);
   }
 
@@ -140,10 +220,15 @@ export async function startCrawlJob(url: string, limit: number = 100, overrides?
  */
 export async function checkCrawlJob(jobId: string, overrides?: CrawlerOverrides) {
   const firecrawl = getFirecrawl(overrides);
-  const statusResponse = await firecrawl.checkCrawlStatus(jobId);
+  const statusResponse = await firecrawl.client.checkCrawlStatus(jobId)
+    .catch((error: unknown) => {
+      reportRateLimitIfNeeded(firecrawl.apiKey, error, overrides);
+      throw error;
+    });
 
   if (!statusResponse.success) {
     const err = statusResponse as { error?: string };
+    reportRateLimitIfNeeded(firecrawl.apiKey, err.error, overrides);
     throw new Error(`Failed to check crawl status: ${err.error || 'Unknown error'}`);
   }
 

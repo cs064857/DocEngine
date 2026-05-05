@@ -1,7 +1,53 @@
+function parseCsvEnv(value?: string): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parsePositiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value || '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseFirecrawlKeyRates(value?: string): Record<string, number> {
+  const rates: Record<string, number> = {};
+
+  for (const pair of parseCsvEnv(value)) {
+    const separatorIndex = pair.lastIndexOf(':');
+    if (separatorIndex <= 0 || separatorIndex === pair.length - 1) {
+      continue;
+    }
+
+    const key = pair.slice(0, separatorIndex).trim();
+    const rate = parsePositiveInteger(pair.slice(separatorIndex + 1).trim(), 0);
+    if (key && rate > 0) {
+      rates[key] = rate;
+    }
+  }
+
+  return rates;
+}
+
+const firecrawlApiKeys = Array.from(
+  new Set([
+    ...parseCsvEnv(process.env.FIRECRAWL_API_KEYS),
+    ...parseCsvEnv(process.env.FIRECRAWL_API_KEY),
+  ])
+);
+
 export const config = {
   firecrawl: {
-    apiKey: process.env.FIRECRAWL_API_KEY!,
+    apiKey: process.env.FIRECRAWL_API_KEY || firecrawlApiKeys[0] || '',
+    apiKeys: firecrawlApiKeys,
     apiUrl: process.env.FIRECRAWL_API_URL || 'https://api.firecrawl.dev',
+    keyRates: parseFirecrawlKeyRates(process.env.FIRECRAWL_KEY_RATES),
+    defaultRatePerMinute: parsePositiveInteger(process.env.FIRECRAWL_DEFAULT_RATE_PER_MINUTE, 10),
+    rateLimitCooldownSeconds: parsePositiveInteger(process.env.FIRECRAWL_RATE_LIMIT_COOLDOWN_SECONDS, 60),
   },
   llm: {
     urlExtractor: {

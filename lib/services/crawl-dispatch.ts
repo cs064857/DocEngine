@@ -270,20 +270,47 @@ async function updateTaskStatus(taskId: string, url: string, success: boolean, e
       return;
     }
 
-    if (success) {
-      taskStatus.completed += 1;
-    } else {
-      taskStatus.failed += 1;
-      taskStatus.failedUrls.push({ url, error: errorMessage || 'Unknown' });
-    }
+    // 查找 URL 在 urls[] 中的當前狀態，用於正確調整計數（修復重試重複累加 bug）
+    let previousStatus: string | undefined;
+    let urlEntry: { url: string; status: string; error?: string } | undefined;
 
     if (taskStatus.urls) {
-      const urlEntry = taskStatus.urls.find((item) => item.url === url);
+      urlEntry = taskStatus.urls.find((item) => item.url === url);
       if (urlEntry) {
-        urlEntry.status = success ? 'success' : 'failed';
-        if (!success) {
-          urlEntry.error = errorMessage;
+        previousStatus = urlEntry.status;
+      }
+    }
+
+    if (success) {
+      // 成功：如果之前 counted as failed，要先扣回 failed
+      if (previousStatus === 'failed') {
+        taskStatus.failed -= 1;
+        // 從 failedUrls 移除
+        taskStatus.failedUrls = taskStatus.failedUrls.filter((item) => item.url !== url);
+      }
+      // 只有從非 success 狀態轉換時才增加 completed（避免重複計數）
+      if (previousStatus !== 'success') {
+        taskStatus.completed += 1;
+      }
+    } else {
+      // 失敗：只有從非 failed 狀態轉換時才增加 failed（避免重試重複累加）
+      if (previousStatus !== 'failed') {
+        taskStatus.failed += 1;
+        taskStatus.failedUrls.push({ url, error: errorMessage || 'Unknown' });
+      } else {
+        // 重試仍失敗：只更新錯誤訊息，不重複計數
+        const existingFailed = taskStatus.failedUrls.find((item) => item.url === url);
+        if (existingFailed) {
+          existingFailed.error = errorMessage || 'Unknown';
         }
+      }
+    }
+
+    // 更新 URL entry 狀態
+    if (urlEntry) {
+      urlEntry.status = success ? 'success' : 'failed';
+      if (!success) {
+        urlEntry.error = errorMessage;
       }
     }
 
