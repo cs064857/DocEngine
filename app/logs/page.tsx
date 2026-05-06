@@ -8,6 +8,7 @@ type LogFileGroup = { date: string; files: string[] };
 type LevelFilter = LogLevel | 'all';
 
 const STORAGE_KEY = 'docengine.logs.password';
+const R2_STORAGE_KEY = 'docengine.logs.r2';
 const LEVELS: LevelFilter[] = ['all', 'info', 'warn', 'error', 'debug'];
 
 const levelStyles: Record<LogLevel, string> = {
@@ -32,6 +33,13 @@ function formatTimestamp(value: string): string {
   return date.toLocaleString();
 }
 
+interface R2Config {
+  r2AccountId: string;
+  r2AccessKeyId: string;
+  r2SecretAccessKey: string;
+  r2BucketName: string;
+}
+
 export default function LogsPage() {
   const [password, setPassword] = useState('');
   const [date, setDate] = useState(today());
@@ -44,7 +52,10 @@ export default function LogsPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [showR2Config, setShowR2Config] = useState(false);
+  const [r2, setR2] = useState<R2Config>({ r2AccountId: '', r2AccessKeyId: '', r2SecretAccessKey: '', r2BucketName: '' });
 
+  // Load saved password
   useEffect(() => {
     setPassword(sessionStorage.getItem(STORAGE_KEY) || '');
   }, []);
@@ -53,16 +64,39 @@ export default function LogsPage() {
     sessionStorage.setItem(STORAGE_KEY, password);
   }, [password]);
 
-  const requestHeaders = useMemo(() => {
-    const headers = new Headers();
-    if (password) headers.set('X-Logs-Password', password);
-    return headers;
-  }, [password]);
+  // Load saved R2 config
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(R2_STORAGE_KEY);
+      if (saved) setR2(JSON.parse(saved));
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    sessionStorage.setItem(R2_STORAGE_KEY, JSON.stringify(r2));
+  }, [r2]);
+
+  const hasR2Overrides = Boolean(r2.r2AccountId || r2.r2AccessKeyId || r2.r2SecretAccessKey || r2.r2BucketName);
+
+  const buildBody = useCallback((extra?: Record<string, unknown>) => {
+    const body: Record<string, unknown> = { ...extra };
+    if (password) body.password = password;
+    if (r2.r2AccountId) body.r2AccountId = r2.r2AccountId;
+    if (r2.r2AccessKeyId) body.r2AccessKeyId = r2.r2AccessKeyId;
+    if (r2.r2SecretAccessKey) body.r2SecretAccessKey = r2.r2SecretAccessKey;
+    if (r2.r2BucketName) body.r2BucketName = r2.r2BucketName;
+    return body;
+  }, [password, r2]);
 
   const filesForDate = useMemo(() => files.find((group) => group.date === date)?.files || [], [date, files]);
 
   const loadFiles = useCallback(async () => {
-    const res = await fetch('/api/logs?list=true', { headers: requestHeaders, cache: 'no-store' });
+    const res = await fetch('/api/logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildBody({ list: true })),
+      cache: 'no-store',
+    });
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
@@ -75,18 +109,20 @@ export default function LogsPage() {
     if (nextFiles.length > 0 && !nextFiles.some((group) => group.date === date)) {
       setDate(nextFiles[0].date);
     }
-  }, [date, requestHeaders]);
+  }, [date, buildBody]);
 
   const loadEntries = useCallback(async () => {
-    const params = new URLSearchParams({ date, limit: '500' });
-    const taskId = fileToTaskId(selectedFile);
-    if (taskId) params.set('taskId', taskId);
-
     setIsLoading(true);
     setError('');
 
     try {
-      const res = await fetch(`/api/logs?${params.toString()}`, { headers: requestHeaders, cache: 'no-store' });
+      const taskId = fileToTaskId(selectedFile);
+      const res = await fetch('/api/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildBody({ date, taskId, limit: 500 })),
+        cache: 'no-store',
+      });
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
@@ -100,7 +136,7 @@ export default function LogsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [date, requestHeaders, selectedFile]);
+  }, [date, buildBody, selectedFile]);
 
   const refreshAll = useCallback(async () => {
     setError('');
@@ -115,7 +151,8 @@ export default function LogsPage() {
 
   useEffect(() => {
     refreshAll();
-  }, [refreshAll]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date, selectedFile]);
 
   useEffect(() => {
     if (filesForDate.length === 0) {
@@ -176,7 +213,7 @@ export default function LogsPage() {
           <div>
             <Link href="/" className="text-xs font-semibold uppercase tracking-[0.35em] text-amber-300/80">DocEngine</Link>
             <h1 className="mt-3 text-3xl font-bold tracking-tight text-white sm:text-4xl">Logs Console</h1>
-            <p className="mt-2 max-w-2xl text-sm text-zinc-400">Read JSONL task logs stored in R2. Use a blank password only when LOGS_PASSWORD is not configured.</p>
+            <p className="mt-2 max-w-2xl text-sm text-zinc-400">Read JSONL task logs stored in R2. Configure R2 credentials from the main page or below.</p>
           </div>
 
           <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 shadow-2xl shadow-black/30">
@@ -201,6 +238,61 @@ export default function LogsPage() {
                   className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none transition focus:border-amber-300/60 focus:ring-2 focus:ring-amber-300/10"
                 />
               </div>
+
+              {/* R2 Config Toggle */}
+              <button
+                type="button"
+                onClick={() => setShowR2Config((v) => !v)}
+                className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-semibold text-zinc-300 transition hover:border-white/20"
+              >
+                <span>R2 Credentials {hasR2Overrides && <span className="text-emerald-400">●</span>}</span>
+                <span className="text-zinc-500">{showR2Config ? '▲' : '▼'}</span>
+              </button>
+
+              {showR2Config && (
+                <div className="space-y-3 rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">Account ID</label>
+                    <input
+                      type="text"
+                      value={r2.r2AccountId}
+                      onChange={(event) => setR2((prev) => ({ ...prev, r2AccountId: event.target.value }))}
+                      placeholder="R2_ACCOUNT_ID"
+                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-xs text-white outline-none focus:border-amber-300/60"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">Access Key ID</label>
+                    <input
+                      type="text"
+                      value={r2.r2AccessKeyId}
+                      onChange={(event) => setR2((prev) => ({ ...prev, r2AccessKeyId: event.target.value }))}
+                      placeholder="R2_ACCESS_KEY_ID"
+                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-xs text-white outline-none focus:border-amber-300/60"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">Secret Access Key</label>
+                    <input
+                      type="password"
+                      value={r2.r2SecretAccessKey}
+                      onChange={(event) => setR2((prev) => ({ ...prev, r2SecretAccessKey: event.target.value }))}
+                      placeholder="R2_SECRET_ACCESS_KEY"
+                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-xs text-white outline-none focus:border-amber-300/60"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">Bucket Name</label>
+                    <input
+                      type="text"
+                      value={r2.r2BucketName}
+                      onChange={(event) => setR2((prev) => ({ ...prev, r2BucketName: event.target.value }))}
+                      placeholder="crawldocs"
+                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-xs text-white outline-none focus:border-amber-300/60"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -295,7 +387,7 @@ export default function LogsPage() {
               {filteredEntries.length === 0 ? (
                 <div className="flex min-h-[360px] flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 bg-black/20 px-6 text-center">
                   <div className="text-lg font-semibold text-white">No log entries found</div>
-                  <p className="mt-2 max-w-md text-sm text-zinc-500">Check the password, date, task file, or filters. New logs are written after the worker flushes its buffer.</p>
+                  <p className="mt-2 max-w-md text-sm text-zinc-500">Check the password, R2 credentials, date, task file, or filters. New logs are written after the worker flushes its buffer.</p>
                 </div>
               ) : filteredEntries.map((entry, index) => (
                 <article key={`${entry.timestamp}-${index}`} className="group rounded-2xl border border-white/10 bg-black/35 p-4 transition hover:border-white/20 hover:bg-white/[0.04]">
