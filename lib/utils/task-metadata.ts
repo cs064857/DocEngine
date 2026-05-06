@@ -119,6 +119,10 @@ export function buildSkillVersionPrefix(date: string, domain: string, taskId: st
   return `skills/${date}/${domain}/${taskId}/`;
 }
 
+export function buildMergedSkillVersionPrefix(dates: string[], taskId: string): string {
+  return buildSkillVersionPrefix(dates[0] || 'merged', 'merged', taskId);
+}
+
 export function buildLegacySkillPrefix(date: string, domain: string): string {
   return `skills/${date}/${domain}/`;
 }

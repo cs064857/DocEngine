@@ -47,6 +47,19 @@ type FirecrawlMultiKeySettings = {
   firecrawlKeyRates?: string;
 };
 
+type CleanedFolderOption = {
+  date: string;
+  domain: string;
+  prefix: string;
+  fileCount: number;
+  emptyFileCount: number;
+};
+
+type SkillSourceFolder = {
+  date: string;
+  domain: string;
+};
+
 // Defines the shape of standard Crawl Task metrics
 interface JobTask {
   taskId: string;
@@ -217,7 +230,7 @@ export default function DocEngineFrontend() {
   const [piProviders, setPiProviders] = useState<PiProviderInfo[]>([]);
   const [isPiProvidersLoading, setIsPiProvidersLoading] = useState(false);
   const [piProvidersError, setPiProvidersError] = useState('');
-  const [availableFolders, setAvailableFolders] = useState<{ date: string; domain: string; prefix: string; fileCount: number; emptyFileCount: number }[]>([]);
+  const [availableFolders, setAvailableFolders] = useState<CleanedFolderOption[]>([]);
 
   // === LLM 連線測試狀態 ===
   const [cleanerTestResult, setCleanerTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
@@ -226,7 +239,7 @@ export default function DocEngineFrontend() {
   const [isSkillTesting, setIsSkillTesting] = useState(false);
   const [extractorTestResult, setExtractorTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
   const [isExtractorTesting, setIsExtractorTesting] = useState(false);
-  const [selectedFolder, setSelectedFolder] = useState<string>('');
+  const [selectedFolders, setSelectedFolders] = useState<Set<string>>(new Set());
   const [skillCustomPrompt, setSkillCustomPrompt] = useState('');
   const [showSkillPrompt, setShowSkillPrompt] = useState(false);
   const [skillTaskId, setSkillTaskId] = useState<string | null>(null);
@@ -248,6 +261,10 @@ export default function DocEngineFrontend() {
   const selectedSkillProviderInfo = piProviders.find((p) => p.id === skillProvider);
   const selectedSkillProviderModels = selectedSkillProviderInfo?.models || [];
   const selectedSkillModelInfo = selectedSkillProviderModels.find((m) => m.id === skillModel);
+  const availableFolderKeys = availableFolders.map((folder) => `${folder.date}|${folder.domain}`);
+  const selectedFolderDetails = availableFolders.filter((folder) => selectedFolders.has(`${folder.date}|${folder.domain}`));
+  const selectedEmptyFileCount = selectedFolderDetails.reduce((total, folder) => total + folder.emptyFileCount, 0);
+  const allAvailableFoldersSelected = availableFolders.length > 0 && selectedFolders.size === availableFolders.length;
 
   const buildFirecrawlMultiKeySettings = useCallback((): FirecrawlMultiKeySettings => {
     const configuredKeys = firecrawlKeys
@@ -403,13 +420,15 @@ export default function DocEngineFrontend() {
   }, [loadSkillHistory, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName, skillTaskId]);
 
   const submitSkillGeneration = useCallback(async (params: {
-    date: string;
-    domain: string;
+    folders: SkillSourceFolder[];
     provider: string;
     modelId: string;
     baseUrl?: string;
     customPrompt?: string;
   }) => {
+    if (params.folders.length === 0) {
+      throw new Error('Please select at least one cleaned folder');
+    }
     if (params.provider === 'openai-codex' && !codexAuth) {
       throw new Error('Please sign in with ChatGPT first');
     }
@@ -420,15 +439,14 @@ export default function DocEngineFrontend() {
     setSkillError('');
     setIsSkillSubmitting(true);
     setSkillStatus(null);
-    setSelectedFolder(`${params.date}|${params.domain}`);
+    setSelectedFolders(new Set(params.folders.map((folder) => `${folder.date}|${folder.domain}`)));
 
     try {
       const res = await fetch('/api/generate-skill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          date: params.date,
-          domain: params.domain,
+          folders: params.folders,
           provider: params.provider,
           modelId: params.modelId,
           apiKey: params.provider === 'openai-codex' ? undefined : skillApiKey,
@@ -2182,59 +2200,99 @@ export default function DocEngineFrontend() {
 
               {/* === 資料夾選擇器 === */}
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-semibold text-gray-700">Cleaned Folder</label>
-                  <button
-                    onClick={async () => {
-                      setIsFoldersLoading(true);
-                      try {
-                        const res = await fetch('/api/list-cleaned-folders', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName,
-                          }),
-                        });
-                        const data = await res.json();
-                        if (data.folders) setAvailableFolders(data.folders);
-                      } catch (err: unknown) {
-                        setSkillError(err instanceof Error ? err.message : 'Failed to load folders');
-                      } finally {
-                        setIsFoldersLoading(false);
-                      }
-                    }}
-                    className="text-xs text-amber-700 hover:text-amber-900 font-medium transition-colors"
-                    disabled={isFoldersLoading}
-                  >
-                    {isFoldersLoading ? 'Loading...' : '↻ Refresh'}
-                  </button>
+                <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm font-semibold text-gray-700">Cleaned Folders</label>
+                    <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-100">
+                      {selectedFolders.size} folder{selectedFolders.size === 1 ? '' : 's'} selected
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 flex-wrap justify-end">
+                    <button
+                      onClick={() => setSelectedFolders(new Set(availableFolderKeys))}
+                      className="text-xs text-violet-700 hover:text-violet-900 font-medium transition-colors disabled:opacity-50"
+                      disabled={isFoldersLoading || availableFolders.length === 0 || allAvailableFoldersSelected}
+                    >
+                      Select All
+                    </button>
+                    <button
+                      onClick={() => setSelectedFolders(new Set())}
+                      className="text-xs text-gray-500 hover:text-gray-700 font-medium transition-colors disabled:opacity-50"
+                      disabled={isFoldersLoading || selectedFolders.size === 0}
+                    >
+                      Deselect All
+                    </button>
+                    <button
+                      onClick={async () => {
+                        setIsFoldersLoading(true);
+                        try {
+                          const res = await fetch('/api/list-cleaned-folders', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName,
+                            }),
+                          });
+                          const data = await res.json();
+                          if (data.folders) {
+                            const folders = data.folders as CleanedFolderOption[];
+                            const nextKeys = new Set(folders.map((folder) => `${folder.date}|${folder.domain}`));
+                            setAvailableFolders(folders);
+                            setSelectedFolders((prev) => new Set(Array.from(prev).filter((key) => nextKeys.has(key))));
+                          }
+                        } catch (err: unknown) {
+                          setSkillError(err instanceof Error ? err.message : 'Failed to load folders');
+                        } finally {
+                          setIsFoldersLoading(false);
+                        }
+                      }}
+                      className="text-xs text-amber-700 hover:text-amber-900 font-medium transition-colors"
+                      disabled={isFoldersLoading}
+                    >
+                      {isFoldersLoading ? 'Loading...' : '↻ Refresh'}
+                    </button>
+                  </div>
                 </div>
-                <select
-                  value={selectedFolder}
-                  onChange={(e) => setSelectedFolder(e.target.value)}
-                  className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
-                >
-                  <option value="">Select a cleaned folder...</option>
-                  {availableFolders.map((f) => (
-                    <option key={f.prefix} value={`${f.date}|${f.domain}`}>
-                      {f.domain} ({f.date}) — {f.fileCount} files{f.emptyFileCount > 0 ? ` (⚠ ${f.emptyFileCount} empty)` : ''}
-                    </option>
-                  ))}
-                </select>
-                {/* 0B 檔案警告提示 */}
-                {selectedFolder && (() => {
-                  const [selDate, selDomain] = selectedFolder.split('|');
-                  const folder = availableFolders.find(f => f.date === selDate && f.domain === selDomain);
-                  if (folder && folder.emptyFileCount > 0) {
+                <div className="max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-[#FAF6F0] divide-y divide-gray-200">
+                  {availableFolders.length === 0 ? (
+                    <div className="px-4 py-3 text-sm text-gray-500">
+                      {isFoldersLoading ? 'Loading cleaned folders...' : 'No cleaned folders loaded. Click Refresh to load folders.'}
+                    </div>
+                  ) : availableFolders.map((folder) => {
+                    const key = `${folder.date}|${folder.domain}`;
                     return (
-                      <div className="mt-2 text-xs px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 flex items-start gap-2">
-                        <span className="text-base leading-none">⚠️</span>
-                        <span>This folder contains <strong>{folder.emptyFileCount}</strong> empty (0B) file{folder.emptyFileCount > 1 ? 's' : ''}. These likely failed LLM cleaning. Consider re-cleaning before generating a skill.</span>
-                      </div>
+                      <label key={folder.prefix} className="flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-white/60 transition-colors cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedFolders.has(key)}
+                          onChange={(e) => {
+                            setSelectedFolders((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) {
+                                next.add(key);
+                              } else {
+                                next.delete(key);
+                              }
+                              return next;
+                            });
+                          }}
+                          className="w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 accent-violet-600"
+                        />
+                        <span className="flex-1 min-w-0 break-all">
+                          {folder.domain} ({folder.date}) — {folder.fileCount} files
+                          {folder.emptyFileCount > 0 ? ` (${folder.emptyFileCount} empty)` : ''}
+                        </span>
+                      </label>
                     );
-                  }
-                  return null;
-                })()}
+                  })}
+                </div>
+                {/* 0B 檔案警告提示 */}
+                {selectedEmptyFileCount > 0 && (
+                  <div className="mt-2 text-xs px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 flex items-start gap-2">
+                    <span className="text-base leading-none">⚠️</span>
+                    <span>{selectedFolderDetails.length === 1 ? 'The selected folder contains' : 'The selected folders contain'} <strong>{selectedEmptyFileCount}</strong> empty (0B) file{selectedEmptyFileCount > 1 ? 's' : ''}. These likely failed LLM cleaning. Consider re-cleaning before generating a skill.</span>
+                  </div>
+                )}
               </div>
 
               {/* === 自訂 Prompt（可收合） === */}
@@ -2260,8 +2318,8 @@ export default function DocEngineFrontend() {
               {/* === 生成按鈕 === */}
               <button
                 onClick={async () => {
-                  if (!selectedFolder) {
-                    setSkillError('Please select a cleaned folder');
+                  if (selectedFolders.size === 0) {
+                    setSkillError('Please select at least one cleaned folder');
                     return;
                   }
                   if (skillAuthMode === 'apikey' && !skillApiKey) {
@@ -2278,11 +2336,13 @@ export default function DocEngineFrontend() {
                   }
 
                   try {
-                    const [date, domain] = selectedFolder.split('|');
+                    const folders = Array.from(selectedFolders).map((value) => {
+                      const [date, domain] = value.split('|');
+                      return { date, domain };
+                    });
                     const isOAuth = skillAuthMode === 'oauth';
                     await submitSkillGeneration({
-                      date,
-                      domain,
+                      folders,
                       provider: isOAuth ? 'openai-codex' : skillProvider,
                       modelId: isOAuth ? 'gpt-4o' : (skillUseCustomModel ? skillCustomModelId.trim() : skillModel),
                       baseUrl: isOAuth ? undefined : (skillBaseUrl.trim() || undefined),
@@ -2292,7 +2352,7 @@ export default function DocEngineFrontend() {
                     setSkillError(err instanceof Error ? err.message : 'Unknown error');
                   }
                 }}
-                disabled={isSkillSubmitting || !selectedFolder}
+                disabled={isSkillSubmitting || selectedFolders.size === 0}
                 className="w-full py-3 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-sm font-semibold transition-all shadow-lg shadow-violet-200/50"
               >
                 {isSkillSubmitting ? '⏳ Submitting...' : '✨ Generate Skill'}
@@ -2465,8 +2525,9 @@ export default function DocEngineFrontend() {
                                 setRetryingSkillTaskIds((prev) => new Set(prev).add(item.taskId));
                                 try {
                                   await submitSkillGeneration({
-                                    date: item.date,
-                                    domain: item.domain,
+                                    folders: item.folders && item.folders.length > 0
+                                      ? item.folders
+                                      : [{ date: item.date, domain: item.domain }],
                                     provider: item.provider || skillProvider,
                                     modelId: item.modelId || skillModel,
                                     baseUrl: item.baseUrl || undefined,

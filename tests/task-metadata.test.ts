@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildMergedSkillVersionPrefix,
   buildSkillVersionPrefix,
   formatStoredDate,
   getTaskDisplayDate,
@@ -53,6 +54,13 @@ test('buildSkillVersionPrefix creates isolated folders per task version', () => 
   assert.equal(
     buildSkillVersionPrefix('20260415', 'docs.firecrawl.dev', 'task-123'),
     'skills/20260415/docs.firecrawl.dev/task-123/'
+  );
+});
+
+test('buildMergedSkillVersionPrefix creates a stable merged skill folder', () => {
+  assert.equal(
+    buildMergedSkillVersionPrefix(['20260416', '20260415'], 'task-merged'),
+    'skills/20260416/merged/task-merged/'
   );
 });
 

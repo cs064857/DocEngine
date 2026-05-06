@@ -22,6 +22,12 @@ import {
 export interface SkillGenerationResult {
   skillMd: string;
   fileList: string[];
+  sourceFiles: { sourceKey: string; referencePath: string }[];
+}
+
+export interface SkillSourceFolder {
+  date: string;
+  domain: string;
 }
 
 /** 進度回報函式 */
@@ -91,17 +97,62 @@ function toRelativePath(key: string, prefix: string): string {
   return rel.replace(/^\/+/, '');
 }
 
-async function readFiles(keys: string[], prefix: string, r2?: R2Overrides): Promise<{ key: string; relativePath: string; content: string }[]> {
-  const results = await Promise.allSettled(
-    keys.map(async (key) => {
-      const content = await getObject(key, r2);
+function buildCleanedPrefix(folder: SkillSourceFolder): string {
+  return `cleaned/${folder.date}/${folder.domain}/`;
+}
+
+async function collectFileReferences(
+  sourceFolders: SkillSourceFolder[],
+  isMergedMode: boolean,
+  r2?: R2Overrides
+): Promise<{ sourceKey: string; relativePath: string }[]> {
+  const references: { sourceKey: string; relativePath: string }[] = [];
+  const seenSourceKeys = new Set<string>();
+  const seenReferencePaths = new Set<string>();
+
+  for (const folder of sourceFolders) {
+    const prefix = buildCleanedPrefix(folder);
+    const fileKeys = await listAllMdFiles(prefix, r2);
+
+    for (const key of fileKeys) {
+      if (seenSourceKeys.has(key)) continue;
+      seenSourceKeys.add(key);
+
       const relativePath = toRelativePath(key, prefix);
-      return { key, relativePath, content };
+      if (!relativePath) continue;
+
+      const baseReferencePath = isMergedMode ? `${folder.domain}/${relativePath}` : relativePath;
+      let referencePath = baseReferencePath;
+      if (seenReferencePaths.has(referencePath)) {
+        referencePath = isMergedMode ? `${folder.date}/${baseReferencePath}` : `${folder.date}/${folder.domain}/${relativePath}`;
+      }
+
+      let collisionIndex = 2;
+      while (seenReferencePaths.has(referencePath)) {
+        referencePath = isMergedMode
+          ? `${folder.date}/${folder.domain}-${collisionIndex}/${relativePath}`
+          : `${folder.date}/${folder.domain}-${collisionIndex}/${relativePath}`;
+        collisionIndex += 1;
+      }
+
+      seenReferencePaths.add(referencePath);
+      references.push({ sourceKey: key, relativePath: referencePath });
+    }
+  }
+
+  return references;
+}
+
+async function readFiles(fileReferences: { sourceKey: string; relativePath: string }[], r2?: R2Overrides): Promise<{ sourceKey: string; relativePath: string; content: string }[]> {
+  const results = await Promise.allSettled(
+    fileReferences.map(async (file) => {
+      const content = await getObject(file.sourceKey, r2);
+      return { ...file, content };
     })
   );
 
   return results
-    .filter((r): r is PromiseFulfilledResult<{ key: string; relativePath: string; content: string }> => r.status === 'fulfilled')
+    .filter((r): r is PromiseFulfilledResult<{ sourceKey: string; relativePath: string; content: string }> => r.status === 'fulfilled')
     .map((r) => r.value);
 }
 
@@ -150,29 +201,34 @@ export async function generateSkill(params: {
   apiKey?: string;
   baseUrl?: string;
   r2?: R2Overrides;
+  folders?: SkillSourceFolder[];
   customPrompt?: string;
   onProgress?: ProgressCallback;
   signal?: AbortSignal;
   throwIfAborted?: () => Promise<void>;
 }): Promise<SkillGenerationResult> {
-  const { date, domain, provider, modelId, apiKey, baseUrl, r2, customPrompt, onProgress, signal, throwIfAborted } = params;
+  const { date, domain, provider, modelId, apiKey, baseUrl, r2, folders, customPrompt, onProgress, signal, throwIfAborted } = params;
 
   await throwIfAborted?.();
 
   // === Phase 0: 收集文件 ===
   await onProgress?.('collecting', '正在從 R2 讀取 cleaned 文件...');
-  const prefix = `cleaned/${date}/${domain}/`;
-  const fileKeys = await listAllMdFiles(prefix, r2);
+  const sourceFolders = folders && folders.length > 0 ? folders : [{ date, domain }];
+  const isMergedMode = sourceFolders.length > 1;
+  const fileReferences = await collectFileReferences(sourceFolders, isMergedMode, r2);
 
-  if (fileKeys.length === 0) {
-    throw new Error(`No cleaned MD files found at: ${prefix}`);
+  if (fileReferences.length === 0) {
+    const sourceLabel = isMergedMode
+      ? sourceFolders.map((folder) => buildCleanedPrefix(folder)).join(', ')
+      : buildCleanedPrefix(sourceFolders[0]);
+    throw new Error(`No cleaned MD files found at: ${sourceLabel}`);
   }
 
-  await onProgress?.('collecting', `找到 ${fileKeys.length} 個文件，正在讀取內容...`);
-  const files = await readFiles(fileKeys, prefix, r2);
+  await onProgress?.('collecting', `找到 ${fileReferences.length} 個文件，正在讀取內容...`);
+  const files = await readFiles(fileReferences, r2);
 
   if (files.length === 0) {
-    throw new Error(`Failed to read any files from: ${prefix}`);
+    throw new Error(`Failed to read any files from selected cleaned folders`);
   }
 
   await throwIfAborted?.();
@@ -273,5 +329,9 @@ export async function generateSkill(params: {
   return {
     skillMd: finalMarkdown,
     fileList: files.map((f) => f.relativePath),
+    sourceFiles: files.map((f) => ({
+      sourceKey: f.sourceKey,
+      referencePath: f.relativePath,
+    })),
   };
 }
