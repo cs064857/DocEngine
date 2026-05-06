@@ -1,430 +1,451 @@
-"use client";
+'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import type { LogEntry, LogLevel } from '@/lib/logger';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
-type LogFileGroup = { date: string; files: string[] };
-type LevelFilter = LogLevel | 'all';
+const API_BASE = '';
 
-const STORAGE_KEY = 'docengine.logs.password';
-const R2_STORAGE_KEY = 'docengine.logs.r2';
-const LEVELS: LevelFilter[] = ['all', 'info', 'warn', 'error', 'debug'];
-
-const levelStyles: Record<LogLevel, string> = {
-  info: 'border-sky-400/40 bg-sky-400/10 text-sky-200',
-  warn: 'border-amber-400/50 bg-amber-400/10 text-amber-200',
-  error: 'border-rose-400/50 bg-rose-400/10 text-rose-200',
-  debug: 'border-violet-400/40 bg-violet-400/10 text-violet-200',
-};
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
+interface LogEntry {
+  timestamp: string;
+  level: 'info' | 'warn' | 'error' | 'debug';
+  taskId?: string;
+  phase?: string;
+  message: string;
+  meta?: Record<string, unknown>;
 }
 
-function fileToTaskId(file: string): string | undefined {
-  if (!file || file === 'global.jsonl') return undefined;
-  return file.replace(/\.jsonl$/, '');
+interface LogFileGroup {
+  date: string;
+  files: string[];
 }
 
-function formatTimestamp(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
-}
+const R2_CREDS_KEY = 'docengineConfig';
 
-interface R2Config {
-  r2AccountId: string;
-  r2AccessKeyId: string;
-  r2SecretAccessKey: string;
-  r2BucketName: string;
+function loadR2Creds(): { accountId: string; accessKeyId: string; secretAccessKey: string; bucketName: string } | null {
+  try {
+    const raw = localStorage.getItem(R2_CREDS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed.r2AccountId && parsed.r2AccessKeyId && parsed.r2SecretAccessKey && parsed.r2BucketName) {
+      return {
+        accountId: parsed.r2AccountId,
+        accessKeyId: parsed.r2AccessKeyId,
+        secretAccessKey: parsed.r2SecretAccessKey,
+        bucketName: parsed.r2BucketName,
+      };
+    }
+  } catch { /* ignore */ }
+  return null;
 }
 
 export default function LogsPage() {
   const [password, setPassword] = useState('');
-  const [date, setDate] = useState(today());
-  const [selectedFile, setSelectedFile] = useState('global.jsonl');
-  const [level, setLevel] = useState<LevelFilter>('all');
-  const [search, setSearch] = useState('');
-  const [autoRefresh, setAutoRefresh] = useState(false);
-  const [files, setFiles] = useState<LogFileGroup[]>([]);
-  const [entries, setEntries] = useState<LogEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isAuthed, setIsAuthed] = useState(false);
+  const [authError, setAuthError] = useState('');
+
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [logFileGroups, setLogFileGroups] = useState<LogFileGroup[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState<string>('');
+  const [selectedDate, setSelectedDate] = useState<string>('');
+  const [filterPhase, setFilterPhase] = useState('');
+  const [filterLevel, setFilterLevel] = useState('');
+  const [searchText, setSearchText] = useState('');
+  const [autoRefresh, setAutoRefresh] = useState(true);
   const [error, setError] = useState('');
-  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-  const [showR2Config, setShowR2Config] = useState(false);
-  const [r2, setR2] = useState<R2Config>({ r2AccountId: '', r2AccessKeyId: '', r2SecretAccessKey: '', r2BucketName: '' });
+  const [r2Ready, setR2Ready] = useState(true);
 
-  // Load saved password
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Check R2 credentials on mount
   useEffect(() => {
-    setPassword(sessionStorage.getItem(STORAGE_KEY) || '');
+    const creds = loadR2Creds();
+    if (!creds) {
+      setR2Ready(false);
+    }
   }, []);
 
-  useEffect(() => {
-    sessionStorage.setItem(STORAGE_KEY, password);
-  }, [password]);
-
-  // Load saved R2 config
-  useEffect(() => {
+  // Verify password
+  const handleLogin = async () => {
+    setAuthError('');
     try {
-      const saved = sessionStorage.getItem(R2_STORAGE_KEY);
-      if (saved) setR2(JSON.parse(saved));
-    } catch { /* ignore */ }
-  }, []);
-
-  useEffect(() => {
-    sessionStorage.setItem(R2_STORAGE_KEY, JSON.stringify(r2));
-  }, [r2]);
-
-  const hasR2Overrides = Boolean(r2.r2AccountId || r2.r2AccessKeyId || r2.r2SecretAccessKey || r2.r2BucketName);
-
-  const buildBody = useCallback((extra?: Record<string, unknown>) => {
-    const body: Record<string, unknown> = { ...extra };
-    if (password) body.password = password;
-    if (r2.r2AccountId) body.r2AccountId = r2.r2AccountId;
-    if (r2.r2AccessKeyId) body.r2AccessKeyId = r2.r2AccessKeyId;
-    if (r2.r2SecretAccessKey) body.r2SecretAccessKey = r2.r2SecretAccessKey;
-    if (r2.r2BucketName) body.r2BucketName = r2.r2BucketName;
-    return body;
-  }, [password, r2]);
-
-  const filesForDate = useMemo(() => files.find((group) => group.date === date)?.files || [], [date, files]);
-
-  const loadFiles = useCallback(async () => {
-    const res = await fetch('/api/logs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildBody({ list: true })),
-      cache: 'no-store',
-    });
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-      throw new Error(typeof data.error === 'string' ? data.error : 'Failed to list log files');
-    }
-
-    const nextFiles = Array.isArray(data.files) ? data.files as LogFileGroup[] : [];
-    setFiles(nextFiles);
-
-    if (nextFiles.length > 0 && !nextFiles.some((group) => group.date === date)) {
-      setDate(nextFiles[0].date);
-    }
-  }, [date, buildBody]);
-
-  const loadEntries = useCallback(async () => {
-    setIsLoading(true);
-    setError('');
-
-    try {
-      const taskId = fileToTaskId(selectedFile);
-      const res = await fetch('/api/logs', {
+      const creds = loadR2Creds();
+      if (!creds) {
+        setAuthError('R2 憑證未設定。請先到主頁設定 R2 帳戶資訊。');
+        return;
+      }
+      const res = await fetch(`${API_BASE}/api/logs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildBody({ date, taskId, limit: 500 })),
-        cache: 'no-store',
+        body: JSON.stringify({
+          action: 'verify',
+          password,
+          r2: creds,
+        }),
       });
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(typeof data.error === 'string' ? data.error : 'Failed to load logs');
+      const data = await res.json();
+      if (data.success) {
+        setIsAuthed(true);
+        sessionStorage.setItem('logs_password', password);
+      } else {
+        setAuthError(data.error || '密碼錯誤');
       }
-
-      setEntries(Array.isArray(data.entries) ? data.entries as LogEntry[] : []);
-    } catch (err: unknown) {
-      setEntries([]);
-      setError(err instanceof Error ? err.message : 'Failed to load logs');
-    } finally {
-      setIsLoading(false);
+    } catch (e) {
+      setAuthError(`驗證失敗: ${e instanceof Error ? e.message : '未知錯誤'}`);
     }
-  }, [date, buildBody, selectedFile]);
+  };
 
-  const refreshAll = useCallback(async () => {
-    setError('');
+  // Fetch log file list
+  const fetchLogFiles = useCallback(async () => {
     try {
-      await loadFiles();
-      await loadEntries();
-    } catch (err: unknown) {
-      setEntries([]);
-      setError(err instanceof Error ? err.message : 'Failed to refresh logs');
+      const creds = loadR2Creds();
+      if (!creds) return;
+      const res = await fetch(`${API_BASE}/api/logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'list',
+          password,
+          r2: creds,
+        }),
+      });
+      const data = await res.json();
+      if (data.files) {
+        setLogFileGroups(data.files);
+        // Auto-select first task file
+        if (!selectedTaskId && data.files.length > 0 && data.files[0].files.length > 0) {
+          const firstGroup = data.files[0];
+          const firstFile = firstGroup.files.find((f: string) => f !== 'global.jsonl') || firstGroup.files[0];
+          const taskId = firstFile.replace('.jsonl', '');
+          setSelectedTaskId(taskId);
+          setSelectedDate(firstGroup.date);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch log files:', e);
     }
-  }, [loadEntries, loadFiles]);
+  }, [password, selectedTaskId]);
 
-  useEffect(() => {
-    refreshAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, selectedFile]);
+  // Fetch logs for selected task
+  const fetchLogs = useCallback(async () => {
+    if (!selectedTaskId) return;
+    try {
+      const creds = loadR2Creds();
+      if (!creds) return;
 
-  useEffect(() => {
-    if (filesForDate.length === 0) {
-      setSelectedFile('global.jsonl');
-      return;
+      const res = await fetch(`${API_BASE}/api/logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'logs',
+          password,
+          taskId: selectedTaskId,
+          date: selectedDate || undefined,
+          phase: filterPhase || undefined,
+          level: filterLevel || undefined,
+          search: searchText || undefined,
+          r2: creds,
+        }),
+      });
+      const data = await res.json();
+      if (data.logs) {
+        setLogs(data.logs);
+        setError('');
+        // Auto-scroll to bottom
+        setTimeout(() => {
+          if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+          }
+        }, 50);
+      } else if (data.error) {
+        setError(data.error);
+      }
+    } catch (e) {
+      setError(`Failed to fetch logs: ${e instanceof Error ? e.message : '未知錯誤'}`);
     }
+  }, [selectedTaskId, password, filterPhase, filterLevel, searchText]);
 
-    if (!filesForDate.includes(selectedFile)) {
-      setSelectedFile(filesForDate.includes('global.jsonl') ? 'global.jsonl' : filesForDate[0]);
-    }
-  }, [filesForDate, selectedFile]);
-
+  // Auto-refresh
   useEffect(() => {
-    if (!autoRefresh) return;
+    if (!isAuthed) return;
+    fetchLogFiles();
+    fetchLogs();
+    if (autoRefresh) {
+      intervalRef.current = setInterval(() => {
+        fetchLogFiles();
+        fetchLogs();
+      }, 5000);
+    }
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [isAuthed, autoRefresh, fetchLogFiles, fetchLogs]);
 
-    const timer = setInterval(() => {
-      refreshAll();
-    }, 5000);
+  // Auto-login from sessionStorage
+  useEffect(() => {
+    const saved = sessionStorage.getItem('logs_password');
+    if (saved) {
+      setPassword(saved);
+      // Try auto-login
+      const creds = loadR2Creds();
+      if (creds) {
+        fetch(`${API_BASE}/api/logs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'verify', password: saved, r2: creds }),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.success) setIsAuthed(true);
+          })
+          .catch(() => { /* ignore */ });
+      }
+    }
+  }, []);
 
-    return () => clearInterval(timer);
-  }, [autoRefresh, refreshAll]);
+  const getLevelColor = (level: string) => {
+    switch (level) {
+      case 'error': return '#ef4444';
+      case 'warn': return '#f59e0b';
+      case 'info': return '#3b82f6';
+      default: return '#6b7280';
+    }
+  };
 
-  const filteredEntries = useMemo(() => {
-    const query = search.trim().toLowerCase();
+  const getPhaseColor = (stage: string) => {
+    const colors: Record<string, string> = {
+      'skill-pipeline': '#8b5cf6',
+      'crawl': '#06b6d4',
+      'clean': '#10b981',
+      'generate': '#f59e0b',
+      'refine': '#ec4899',
+      'fetch': '#6366f1',
+      'api': '#14b8a6',
+      'root': '#64748b',
+    };
+    return colors[stage] || '#6b7280';
+  };
 
-    return entries.filter((entry) => {
-      if (level !== 'all' && entry.level !== level) return false;
-      if (!query) return true;
-
-      const haystack = [
-        entry.timestamp,
-        entry.level,
-        entry.taskId,
-        entry.phase,
-        entry.message,
-        entry.meta ? JSON.stringify(entry.meta) : '',
-      ].join(' ').toLowerCase();
-
-      return haystack.includes(query);
-    });
-  }, [entries, level, search]);
-
-  async function copyEntry(entry: LogEntry, index: number): Promise<void> {
-    await navigator.clipboard.writeText(JSON.stringify(entry, null, 2));
-    setCopiedIndex(index);
-    window.setTimeout(() => setCopiedIndex(null), 1200);
+  // R2 未設定提示
+  if (!r2Ready) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#0f172a', color: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+        <div style={{ background: '#1e293b', borderRadius: 12, padding: '40px', maxWidth: 480, textAlign: 'center', border: '1px solid #334155' }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
+          <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12, color: '#f1f5f9' }}>R2 憑證未設定</h2>
+          <p style={{ color: '#94a3b8', lineHeight: 1.6, marginBottom: 24 }}>
+            請先到主頁設定 Cloudflare R2 帳戶資訊（Account ID、Access Key、Secret Key、Bucket Name），
+            然後返回此頁面查看日誌。
+          </p>
+          <a
+            href="/"
+            style={{
+              display: 'inline-block',
+              padding: '10px 24px',
+              background: '#3b82f6',
+              color: '#fff',
+              borderRadius: 8,
+              fontWeight: 600,
+              textDecoration: 'none',
+              transition: 'background 0.2s',
+            }}
+          >
+            前往主頁設定
+          </a>
+        </div>
+      </div>
+    );
   }
 
+  // Login screen
+  if (!isAuthed) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#0f172a', color: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+        <div style={{ background: '#1e293b', borderRadius: 12, padding: '40px', maxWidth: 400, width: '100%', border: '1px solid #334155' }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8, textAlign: 'center', color: '#f1f5f9' }}>
+            🔐 DocEngine Logs
+          </h1>
+          <p style={{ color: '#94a3b8', textAlign: 'center', marginBottom: 24, fontSize: 14 }}>
+            請輸入日誌查看密碼
+          </p>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+            placeholder="Password"
+            style={{
+              width: '100%',
+              padding: '12px 16px',
+              background: '#0f172a',
+              border: '1px solid #334155',
+              borderRadius: 8,
+              color: '#e2e8f0',
+              fontSize: 14,
+              marginBottom: 12,
+              outline: 'none',
+              boxSizing: 'border-box',
+            }}
+          />
+          <button
+            onClick={handleLogin}
+            style={{
+              width: '100%',
+              padding: '12px',
+              background: '#3b82f6',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 8,
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontSize: 14,
+            }}
+          >
+            登入
+          </button>
+          {authError && (
+            <p style={{ color: '#ef4444', marginTop: 12, fontSize: 13, textAlign: 'center' }}>{authError}</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Main logs view
+  const uniquePhases = [...new Set(logs.map((l) => l.phase))];
+  // Flatten file groups to extract task IDs (filter out global.jsonl)
+  const allTaskFiles = logFileGroups.flatMap((g) =>
+    g.files.filter((f) => f !== 'global.jsonl').map((f) => ({
+      date: g.date,
+      taskId: f.replace('.jsonl', ''),
+    }))
+  );
+
   return (
-    <main className="min-h-screen bg-[#050507] text-zinc-100">
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-amber-500/15 blur-3xl" />
-        <div className="absolute right-0 top-32 h-80 w-80 rounded-full bg-violet-500/10 blur-3xl" />
+    <div style={{ minHeight: '100vh', background: '#0f172a', color: '#e2e8f0', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      {/* Header */}
+      <div style={{ background: '#1e293b', borderBottom: '1px solid #334155', padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <h1 style={{ fontSize: 18, fontWeight: 700, color: '#f1f5f9', margin: 0 }}>📋 DocEngine Logs</h1>
+          <a href="/" style={{ color: '#64748b', fontSize: 13, textDecoration: 'none' }}>← 返回主頁</a>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          {/* Task selector */}
+          <select
+            value={selectedTaskId}
+            onChange={(e) => {
+              const taskId = e.target.value;
+              setSelectedTaskId(taskId);
+              // Find the date for this task
+              const match = allTaskFiles.find((t) => t.taskId === taskId);
+              if (match) setSelectedDate(match.date);
+            }}
+            style={{ padding: '6px 10px', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', fontSize: 13 }}
+          >
+            <option value="">選擇任務</option>
+            {allTaskFiles.map((t) => (
+              <option key={`${t.date}-${t.taskId}`} value={t.taskId}>{t.taskId} ({t.date})</option>
+            ))}
+          </select>
+          {/* Stage filter */}
+          <select
+            value={filterPhase}
+            onChange={(e) => setFilterPhase(e.target.value)}
+            style={{ padding: '6px 10px', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', fontSize: 13 }}
+          >
+            <option value="">全部 Phase</option>
+            {uniquePhases.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          {/* Level filter */}
+          <select
+            value={filterLevel}
+            onChange={(e) => setFilterLevel(e.target.value)}
+            style={{ padding: '6px 10px', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', fontSize: 13 }}
+          >
+            <option value="">全部 Level</option>
+            <option value="info">Info</option>
+            <option value="warn">Warn</option>
+            <option value="error">Error</option>
+          </select>
+          {/* Search */}
+          <input
+            type="text"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            placeholder="🔍 搜尋日誌..."
+            style={{ padding: '6px 10px', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', fontSize: 13, width: 160 }}
+          />
+          {/* Auto-refresh toggle */}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: '#94a3b8', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.checked)}
+              style={{ cursor: 'pointer' }}
+            />
+            自動刷新
+          </label>
+          <button
+            onClick={() => { fetchLogFiles(); fetchLogs(); }}
+            style={{ padding: '6px 12px', background: '#334155', border: '1px solid #475569', borderRadius: 6, color: '#e2e8f0', fontSize: 13, cursor: 'pointer' }}
+          >
+            ↻ 刷新
+          </button>
+        </div>
       </div>
 
-      <section className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-6 sm:px-6 lg:px-8">
-        <header className="flex flex-col gap-4 border-b border-white/10 pb-6 md:flex-row md:items-center md:justify-between">
-          <div>
-            <Link href="/" className="text-xs font-semibold uppercase tracking-[0.35em] text-amber-300/80">DocEngine</Link>
-            <h1 className="mt-3 text-3xl font-bold tracking-tight text-white sm:text-4xl">Logs Console</h1>
-            <p className="mt-2 max-w-2xl text-sm text-zinc-400">Read JSONL task logs stored in R2. Configure R2 credentials from the main page or below.</p>
-          </div>
-
-          <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 shadow-2xl shadow-black/30">
-            <span className={`h-2.5 w-2.5 rounded-full ${error ? 'bg-rose-400' : 'bg-emerald-400'}`} />
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500">Status</div>
-              <div className="text-sm font-medium text-zinc-200">{error || `${filteredEntries.length} visible entries`}</div>
-            </div>
-          </div>
-        </header>
-
-        <div className="grid flex-1 gap-5 py-6 lg:grid-cols-[360px_1fr]">
-          <aside className="h-fit rounded-3xl border border-white/10 bg-zinc-950/80 p-5 shadow-2xl shadow-black/40 backdrop-blur">
-            <div className="space-y-5">
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Password</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="LOGS_PASSWORD"
-                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none transition focus:border-amber-300/60 focus:ring-2 focus:ring-amber-300/10"
-                />
-              </div>
-
-              {/* R2 Config Toggle */}
-              <button
-                type="button"
-                onClick={() => setShowR2Config((v) => !v)}
-                className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-semibold text-zinc-300 transition hover:border-white/20"
-              >
-                <span>R2 Credentials {hasR2Overrides && <span className="text-emerald-400">●</span>}</span>
-                <span className="text-zinc-500">{showR2Config ? '▲' : '▼'}</span>
-              </button>
-
-              {showR2Config && (
-                <div className="space-y-3 rounded-2xl border border-white/10 bg-black/20 p-4">
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">Account ID</label>
-                    <input
-                      type="text"
-                      value={r2.r2AccountId}
-                      onChange={(event) => setR2((prev) => ({ ...prev, r2AccountId: event.target.value }))}
-                      placeholder="R2_ACCOUNT_ID"
-                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-xs text-white outline-none focus:border-amber-300/60"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">Access Key ID</label>
-                    <input
-                      type="text"
-                      value={r2.r2AccessKeyId}
-                      onChange={(event) => setR2((prev) => ({ ...prev, r2AccessKeyId: event.target.value }))}
-                      placeholder="R2_ACCESS_KEY_ID"
-                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-xs text-white outline-none focus:border-amber-300/60"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">Secret Access Key</label>
-                    <input
-                      type="password"
-                      value={r2.r2SecretAccessKey}
-                      onChange={(event) => setR2((prev) => ({ ...prev, r2SecretAccessKey: event.target.value }))}
-                      placeholder="R2_SECRET_ACCESS_KEY"
-                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-xs text-white outline-none focus:border-amber-300/60"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-500">Bucket Name</label>
-                    <input
-                      type="text"
-                      value={r2.r2BucketName}
-                      onChange={(event) => setR2((prev) => ({ ...prev, r2BucketName: event.target.value }))}
-                      placeholder="crawldocs"
-                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-xs text-white outline-none focus:border-amber-300/60"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Date</label>
-                  <input
-                    type="date"
-                    value={date}
-                    onChange={(event) => setDate(event.target.value)}
-                    className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none transition focus:border-amber-300/60 focus:ring-2 focus:ring-amber-300/10"
-                  />
-                </div>
-                <div>
-                  <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Level</label>
-                  <select
-                    value={level}
-                    onChange={(event) => setLevel(event.target.value as LevelFilter)}
-                    className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none transition focus:border-amber-300/60 focus:ring-2 focus:ring-amber-300/10"
-                  >
-                    {LEVELS.map((item) => <option key={item} value={item}>{item.toUpperCase()}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Task File</label>
-                <select
-                  value={selectedFile}
-                  onChange={(event) => setSelectedFile(event.target.value)}
-                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none transition focus:border-amber-300/60 focus:ring-2 focus:ring-amber-300/10"
-                >
-                  {filesForDate.length === 0 ? (
-                    <option value="global.jsonl">global.jsonl</option>
-                  ) : filesForDate.map((file) => (
-                    <option key={file} value={file}>{file}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Search</label>
-                <input
-                  type="search"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="message, phase, taskId, metadata"
-                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none transition focus:border-amber-300/60 focus:ring-2 focus:ring-amber-300/10"
-                />
-              </div>
-
-              <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
-                <div>
-                  <div className="text-sm font-semibold text-white">Auto refresh</div>
-                  <div className="text-xs text-zinc-500">Every 5 seconds</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setAutoRefresh((value) => !value)}
-                  className={`relative h-7 w-12 rounded-full transition ${autoRefresh ? 'bg-amber-400' : 'bg-zinc-700'}`}
-                  aria-pressed={autoRefresh}
-                >
-                  <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${autoRefresh ? 'left-6' : 'left-1'}`} />
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={refreshAll}
-                disabled={isLoading}
-                className="w-full rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-3 text-sm font-bold text-black shadow-lg shadow-amber-500/20 transition hover:from-amber-400 hover:to-orange-400 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isLoading ? 'Loading logs...' : 'Refresh Logs'}
-              </button>
-            </div>
-          </aside>
-
-          <section className="min-h-[640px] rounded-3xl border border-white/10 bg-zinc-950/75 shadow-2xl shadow-black/40 backdrop-blur">
-            <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 md:flex-row md:items-center md:justify-between">
-              <div>
-                <div className="text-sm font-semibold text-white">{date} / {selectedFile}</div>
-                <div className="mt-1 text-xs text-zinc-500">Showing newest 500 entries before filters.</div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {LEVELS.filter((item): item is LogLevel => item !== 'all').map((item) => (
-                  <span key={item} className={`rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${levelStyles[item]}`}>
-                    {item}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="max-h-[calc(100vh-210px)] space-y-3 overflow-y-auto p-4 custom-scrollbar">
-              {filteredEntries.length === 0 ? (
-                <div className="flex min-h-[360px] flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 bg-black/20 px-6 text-center">
-                  <div className="text-lg font-semibold text-white">No log entries found</div>
-                  <p className="mt-2 max-w-md text-sm text-zinc-500">Check the password, R2 credentials, date, task file, or filters. New logs are written after the worker flushes its buffer.</p>
-                </div>
-              ) : filteredEntries.map((entry, index) => (
-                <article key={`${entry.timestamp}-${index}`} className="group rounded-2xl border border-white/10 bg-black/35 p-4 transition hover:border-white/20 hover:bg-white/[0.04]">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide ${levelStyles[entry.level]}`}>
-                          {entry.level}
-                        </span>
-                        {entry.phase && <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-300">{entry.phase}</span>}
-                        {entry.taskId && <span className="max-w-full truncate rounded-full border border-white/10 bg-zinc-900 px-2.5 py-1 font-mono text-[11px] text-zinc-400">{entry.taskId}</span>}
-                      </div>
-                      <p className="mt-3 break-words text-sm font-medium leading-6 text-zinc-100">{entry.message}</p>
-                      {entry.meta && Object.keys(entry.meta).length > 0 && (
-                        <pre className="mt-3 overflow-x-auto rounded-2xl border border-white/10 bg-zinc-950 px-4 py-3 text-xs leading-5 text-zinc-300 custom-scrollbar">
-                          {JSON.stringify(entry.meta, null, 2)}
-                        </pre>
-                      )}
-                    </div>
-
-                    <div className="flex shrink-0 items-center gap-3 text-xs text-zinc-500 md:flex-col md:items-end">
-                      <time dateTime={entry.timestamp}>{formatTimestamp(entry.timestamp)}</time>
-                      <button
-                        type="button"
-                        onClick={() => copyEntry(entry, index)}
-                        className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-semibold text-zinc-300 transition hover:border-amber-300/60 hover:text-amber-200"
-                      >
-                        {copiedIndex === index ? 'Copied' : 'Copy'}
-                      </button>
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
+      {/* Error banner */}
+      {error && (
+        <div style={{ background: '#7f1d1d', padding: '8px 24px', fontSize: 13, color: '#fca5a5' }}>
+          ⚠️ {error}
         </div>
-      </section>
-    </main>
+      )}
+
+      {/* Logs */}
+      <div
+        ref={scrollRef}
+        style={{
+          padding: '16px 24px',
+          maxHeight: 'calc(100vh - 60px)',
+          overflowY: 'auto',
+        }}
+      >
+        {logs.length === 0 ? (
+          <div style={{ color: '#64748b', textAlign: 'center', marginTop: 48 }}>
+            {selectedTaskId ? '暫無日誌' : '請選擇一個任務查看日誌'}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {logs.map((log, i) => (
+              <div
+                key={i}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '180px 56px 140px 1fr',
+                  gap: 12,
+                  padding: '6px 12px',
+                  background: log.level === 'error' ? '#1c1017' : log.level === 'warn' ? '#1c1707' : 'transparent',
+                  borderRadius: 4,
+                  fontSize: 13,
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                  lineHeight: 1.5,
+                }}
+              >
+                <span style={{ color: '#64748b' }}>{log.timestamp}</span>
+                <span style={{ color: getLevelColor(log.level), fontWeight: 600 }}>{log.level.toUpperCase()}</span>
+                <span style={{ color: getPhaseColor(log.phase || '') }}>[{log.phase || '-'}]</span>
+                <span style={{ color: '#e2e8f0', wordBreak: 'break-word' }}>
+                  {log.message}
+                  {log.meta && (
+                    <span style={{ color: '#64748b', marginLeft: 8, fontSize: 12 }}>
+                      {JSON.stringify(log.meta)}
+                    </span>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
