@@ -64,6 +64,20 @@ test('buildMergedSkillVersionPrefix creates a stable merged skill folder', () =>
   );
 });
 
+test('buildMergedSkillVersionPrefix uses a sanitized custom merged skill name', () => {
+  assert.equal(
+    buildMergedSkillVersionPrefix(['20260416', '20260415'], 'task-merged', ' My Combined/Skill! '),
+    'skills/20260416/my-combined-skill/task-merged/'
+  );
+});
+
+test('buildMergedSkillVersionPrefix falls back when custom merged skill name sanitizes empty', () => {
+  assert.equal(
+    buildMergedSkillVersionPrefix(['20260416'], 'task-merged', '///'),
+    'skills/20260416/merged/task-merged/'
+  );
+});
+
 test('sanitizeEngineSettingsForStorage removes secrets but keeps crawl behavior settings', () => {
   assert.deepEqual(
     sanitizeEngineSettingsForStorage({

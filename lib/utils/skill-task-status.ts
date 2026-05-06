@@ -23,6 +23,7 @@ export interface SkillTaskStatus {
   modelId?: string;
   baseUrl?: string;
   customPrompt?: string;
+  mergedName?: string;
   folders?: SkillTaskSourceFolder[];
 }
 

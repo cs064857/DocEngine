@@ -240,6 +240,7 @@ export default function DocEngineFrontend() {
   const [extractorTestResult, setExtractorTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
   const [isExtractorTesting, setIsExtractorTesting] = useState(false);
   const [selectedFolders, setSelectedFolders] = useState<Set<string>>(new Set());
+  const [mergedName, setMergedName] = useState('');
   const [skillCustomPrompt, setSkillCustomPrompt] = useState('');
   const [showSkillPrompt, setShowSkillPrompt] = useState(false);
   const [skillTaskId, setSkillTaskId] = useState<string | null>(null);
@@ -425,6 +426,7 @@ export default function DocEngineFrontend() {
     modelId: string;
     baseUrl?: string;
     customPrompt?: string;
+    mergedName?: string;
   }) => {
     if (params.folders.length === 0) {
       throw new Error('Please select at least one cleaned folder');
@@ -452,6 +454,7 @@ export default function DocEngineFrontend() {
           apiKey: params.provider === 'openai-codex' ? undefined : skillApiKey,
           baseUrl: params.provider === 'openai-codex' ? undefined : params.baseUrl,
           customPrompt: params.customPrompt || undefined,
+          mergedName: params.mergedName || undefined,
           r2AccountId,
           r2AccessKeyId,
           r2SecretAccessKey,
@@ -2293,6 +2296,21 @@ export default function DocEngineFrontend() {
                     <span>{selectedFolderDetails.length === 1 ? 'The selected folder contains' : 'The selected folders contain'} <strong>{selectedEmptyFileCount}</strong> empty (0B) file{selectedEmptyFileCount > 1 ? 's' : ''}. These likely failed LLM cleaning. Consider re-cleaning before generating a skill.</span>
                   </div>
                 )}
+                {selectedFolders.size > 1 && (
+                  <div className="mt-3">
+                    <label className="block text-xs text-gray-500 mb-1">Merged Skill Name</label>
+                    <input
+                      type="text"
+                      value={mergedName}
+                      onChange={(e) => setMergedName(e.target.value)}
+                      placeholder="e.g. my-combined-skill (kebab-case)"
+                      className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
+                    />
+                    <div className="mt-1 text-[11px] text-gray-500">
+                      Custom name for the merged output folder. Leave blank to use default "merged".
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* === 自訂 Prompt（可收合） === */}
@@ -2347,6 +2365,7 @@ export default function DocEngineFrontend() {
                       modelId: isOAuth ? 'gpt-4o' : (skillUseCustomModel ? skillCustomModelId.trim() : skillModel),
                       baseUrl: isOAuth ? undefined : (skillBaseUrl.trim() || undefined),
                       customPrompt: skillCustomPrompt || undefined,
+                      mergedName: selectedFolders.size > 1 ? (mergedName.trim() || undefined) : undefined,
                     });
                   } catch (err: unknown) {
                     setSkillError(err instanceof Error ? err.message : 'Unknown error');
@@ -2532,6 +2551,7 @@ export default function DocEngineFrontend() {
                                     modelId: item.modelId || skillModel,
                                     baseUrl: item.baseUrl || undefined,
                                     customPrompt: item.customPrompt || undefined,
+                                    mergedName: item.mergedName || undefined,
                                   });
                                 } catch (err: unknown) {
                                   setSkillError(err instanceof Error ? err.message : 'Retry failed');

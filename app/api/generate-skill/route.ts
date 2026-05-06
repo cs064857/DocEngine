@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listObjects, putObject, getObject } from '@/lib/r2';
 import { generateTaskId } from '@/lib/utils/helpers';
-import { buildMergedSkillVersionPrefix, buildSkillVersionPrefix } from '@/lib/utils/task-metadata';
+import { buildMergedSkillVersionPrefix, buildSkillVersionPrefix, sanitizeSkillPathName } from '@/lib/utils/task-metadata';
 import { generateSkill } from '@/lib/processors/skill-generator';
 import type { SkillSourceFolder } from '@/lib/processors/skill-generator';
 import {
@@ -25,6 +25,7 @@ export interface SkillJobPayload {
   apiKey?: string;
   baseUrl?: string;
   customPrompt?: string;
+  mergedName?: string;
   r2AccountId?: string;
   r2AccessKeyId?: string;
   r2SecretAccessKey?: string;
@@ -50,12 +51,12 @@ function resolveSkillSourceFolders(body: Record<string, unknown>): SkillSourceFo
   return null;
 }
 
-function getOutputMetadata(folders: SkillSourceFolder[], taskId: string): { date: string; domain: string; outputPrefix: string } {
+function getOutputMetadata(folders: SkillSourceFolder[], taskId: string, mergedName?: string): { date: string; domain: string; outputPrefix: string } {
   const isMergedMode = folders.length > 1;
   const date = folders[0].date;
-  const domain = isMergedMode ? 'merged' : folders[0].domain;
+  const domain = isMergedMode ? sanitizeSkillPathName(mergedName) : folders[0].domain;
   const outputPrefix = isMergedMode
-    ? buildMergedSkillVersionPrefix(folders.map((folder) => folder.date), taskId)
+    ? buildMergedSkillVersionPrefix(folders.map((folder) => folder.date), taskId, mergedName)
     : buildSkillVersionPrefix(date, domain, taskId);
 
   return { date, domain, outputPrefix };
@@ -65,11 +66,11 @@ function getOutputMetadata(folders: SkillSourceFolder[], taskId: string): { date
  * 非阻塞異步任務處理 (Fire-and-Forget for Docker)
  */
 async function processSkillGeneration(payload: SkillJobPayload) {
-  const { taskId, customPrompt, provider, modelId, apiKey, baseUrl } = payload;
+  const { taskId, customPrompt, provider, modelId, apiKey, baseUrl, mergedName } = payload;
   const folders = payload.folders && payload.folders.length > 0
     ? payload.folders
     : [{ date: payload.date, domain: payload.domain }];
-  const { date, domain, outputPrefix } = getOutputMetadata(folders, taskId);
+  const { date, domain, outputPrefix } = getOutputMetadata(folders, taskId, mergedName);
   const r2 = extractSkillTaskR2Overrides(payload);
   const abortController = new AbortController();
   const ensureTaskNotAborted = async () => throwIfSkillTaskAborted(taskId, r2);
@@ -180,6 +181,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { provider, modelId, apiKey, baseUrl, customPrompt } = body;
+    const mergedName = typeof body.mergedName === 'string' ? body.mergedName : undefined;
     const folders = resolveSkillSourceFolders(body);
 
     if (!folders) {
@@ -203,7 +205,7 @@ export async function POST(req: NextRequest) {
     const resolvedModelId = modelId || config.llm.skillGenerator.modelId;
     const taskId = generateTaskId();
     const now = new Date().toISOString();
-    const { date, domain, outputPrefix } = getOutputMetadata(folders, taskId);
+    const { date, domain, outputPrefix } = getOutputMetadata(folders, taskId, mergedName);
 
     const taskStatus: SkillTaskStatus = {
       taskId,
@@ -219,6 +221,7 @@ export async function POST(req: NextRequest) {
       modelId: resolvedModelId,
       baseUrl: baseUrl || undefined,
       customPrompt: customPrompt || undefined,
+      mergedName: folders.length > 1 ? sanitizeSkillPathName(mergedName) : undefined,
       folders,
     };
 
@@ -239,6 +242,7 @@ export async function POST(req: NextRequest) {
       apiKey,
       baseUrl,
       customPrompt,
+      mergedName,
       r2AccountId: body.r2AccountId,
       r2AccessKeyId: body.r2AccessKeyId,
       r2SecretAccessKey: body.r2SecretAccessKey,
