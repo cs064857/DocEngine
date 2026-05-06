@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { flushAllLogs, logger } from '@/lib/logger';
 import { listObjects, putObject, getObject } from '@/lib/r2';
 import { generateTaskId } from '@/lib/utils/helpers';
 import { buildMergedSkillVersionPrefix, buildSkillVersionPrefix, sanitizeSkillPathName } from '@/lib/utils/task-metadata';
@@ -76,6 +77,12 @@ async function processSkillGeneration(payload: SkillJobPayload) {
   const ensureTaskNotAborted = async () => throwIfSkillTaskAborted(taskId, r2);
 
   console.log(`[Skill Worker] Processing task ${taskId}: ${domain} (${folders.length} folder${folders.length > 1 ? 's' : ''})`);
+  logger.info('Processing skill generation task', {
+    taskId,
+    phase: 'start',
+    meta: { domain, folderCount: folders.length },
+    r2,
+  });
   registerSkillTaskAbortController(taskId, abortController);
 
   try {
@@ -104,6 +111,7 @@ async function processSkillGeneration(payload: SkillJobPayload) {
       throwIfAborted: ensureTaskNotAborted,
       onProgress: async (phase, detail) => {
         console.log(`[Skill Worker] Task ${taskId} - ${phase}: ${detail}`);
+        logger.info(detail, { taskId, phase, r2 });
         await ensureTaskNotAborted();
         await updateSkillTaskStatus(taskId, {
           phase: phase as SkillTaskStatus['phase'],
@@ -150,9 +158,16 @@ async function processSkillGeneration(payload: SkillJobPayload) {
     }, r2);
 
     console.log(`[Skill Worker] Task ${taskId} completed successfully`);
+    logger.info('Task completed successfully', {
+      taskId,
+      phase: 'done',
+      meta: { fileCount: result.fileList.length },
+      r2,
+    });
   } catch (error: unknown) {
     if (isAbortError(error)) {
       console.log(`[Skill Worker] Task ${taskId} aborted`);
+      logger.info('Task aborted', { taskId, phase: 'aborted', r2 });
       await updateSkillTaskStatus(taskId, {
         status: 'aborted',
         error: SKILL_TASK_ABORT_MESSAGE,
@@ -164,12 +179,14 @@ async function processSkillGeneration(payload: SkillJobPayload) {
 
     console.error(`[Skill Worker] Task ${taskId} failed:`, error);
     const errMsg = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('Task failed', { taskId, phase: 'failed', meta: { error: errMsg }, r2 });
 
     await updateSkillTaskStatus(taskId, {
       status: 'failed',
       error: errMsg,
     }, r2);
   } finally {
+    await flushAllLogs(r2);
     unregisterSkillTaskAbortController(taskId);
   }
 }
@@ -231,6 +248,13 @@ export async function POST(req: NextRequest) {
       'application/json',
       r2
     );
+    logger.info('Task created and queued', {
+      taskId,
+      phase: 'queued',
+      meta: { domain, provider: resolvedProvider, modelId: resolvedModelId },
+      r2,
+    });
+    await flushAllLogs(r2);
 
     const payload: SkillJobPayload = {
       taskId,
