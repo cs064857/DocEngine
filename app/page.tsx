@@ -37,6 +37,29 @@ interface PiProviderInfo {
   models: PiModelInfo[];
 }
 
+type FirecrawlKeyConfig = {
+  key: string;
+  ratePerMinute: number;
+};
+
+type FirecrawlMultiKeySettings = {
+  firecrawlApiKeys?: string;
+  firecrawlKeyRates?: string;
+};
+
+type CleanedFolderOption = {
+  date: string;
+  domain: string;
+  prefix: string;
+  fileCount: number;
+  emptyFileCount: number;
+};
+
+type SkillSourceFolder = {
+  date: string;
+  domain: string;
+};
+
 // Defines the shape of standard Crawl Task metrics
 interface JobTask {
   taskId: string;
@@ -115,6 +138,10 @@ export default function DocEngineFrontend() {
 
   // Content Cleaner 配置
   const [firecrawlKey, setFirecrawlKey] = useState('');
+  const [firecrawlKeys, setFirecrawlKeys] = useState<FirecrawlKeyConfig[]>([]);
+  const [showDefaultFirecrawlKey, setShowDefaultFirecrawlKey] = useState(false);
+  const [showFirecrawlKeyManager, setShowFirecrawlKeyManager] = useState(false);
+  const [visibleFirecrawlKeyIndexes, setVisibleFirecrawlKeyIndexes] = useState<Set<number>>(new Set());
   const [llmApiKey, setLlmApiKey] = useState('');
   const [llmModelName, setLlmModelName] = useState('glm-4-flash');
   const [llmBaseUrl, setLlmBaseUrl] = useState('');
@@ -203,7 +230,7 @@ export default function DocEngineFrontend() {
   const [piProviders, setPiProviders] = useState<PiProviderInfo[]>([]);
   const [isPiProvidersLoading, setIsPiProvidersLoading] = useState(false);
   const [piProvidersError, setPiProvidersError] = useState('');
-  const [availableFolders, setAvailableFolders] = useState<{ date: string; domain: string; prefix: string; fileCount: number; emptyFileCount: number }[]>([]);
+  const [availableFolders, setAvailableFolders] = useState<CleanedFolderOption[]>([]);
 
   // === LLM 連線測試狀態 ===
   const [cleanerTestResult, setCleanerTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
@@ -212,7 +239,8 @@ export default function DocEngineFrontend() {
   const [isSkillTesting, setIsSkillTesting] = useState(false);
   const [extractorTestResult, setExtractorTestResult] = useState<{ success: boolean; message: string; latencyMs?: number } | null>(null);
   const [isExtractorTesting, setIsExtractorTesting] = useState(false);
-  const [selectedFolder, setSelectedFolder] = useState<string>('');
+  const [selectedFolders, setSelectedFolders] = useState<Set<string>>(new Set());
+  const [mergedName, setMergedName] = useState('');
   const [skillCustomPrompt, setSkillCustomPrompt] = useState('');
   const [showSkillPrompt, setShowSkillPrompt] = useState(false);
   const [skillTaskId, setSkillTaskId] = useState<string | null>(null);
@@ -234,6 +262,63 @@ export default function DocEngineFrontend() {
   const selectedSkillProviderInfo = piProviders.find((p) => p.id === skillProvider);
   const selectedSkillProviderModels = selectedSkillProviderInfo?.models || [];
   const selectedSkillModelInfo = selectedSkillProviderModels.find((m) => m.id === skillModel);
+  const availableFolderKeys = availableFolders.map((folder) => `${folder.date}|${folder.domain}`);
+  const selectedFolderDetails = availableFolders.filter((folder) => selectedFolders.has(`${folder.date}|${folder.domain}`));
+  const selectedEmptyFileCount = selectedFolderDetails.reduce((total, folder) => total + folder.emptyFileCount, 0);
+  const allAvailableFoldersSelected = availableFolders.length > 0 && selectedFolders.size === availableFolders.length;
+
+  const buildFirecrawlMultiKeySettings = useCallback((): FirecrawlMultiKeySettings => {
+    const configuredKeys = firecrawlKeys
+      .map((item) => ({
+        key: item.key.trim(),
+        ratePerMinute: Number.isFinite(item.ratePerMinute) && item.ratePerMinute > 0
+          ? Math.floor(item.ratePerMinute)
+          : 10,
+      }))
+      .filter((item) => item.key);
+
+    if (configuredKeys.length === 0) {
+      return {};
+    }
+
+    return {
+      firecrawlApiKeys: configuredKeys.map((item) => item.key).join(','),
+      firecrawlKeyRates: configuredKeys.map((item) => `${item.key}:${item.ratePerMinute}`).join(','),
+    };
+  }, [firecrawlKeys]);
+
+  const updateFirecrawlKeyConfig = (index: number, updates: Partial<FirecrawlKeyConfig>) => {
+    setFirecrawlKeys((prev) => prev.map((item, itemIndex) => (
+      itemIndex === index ? { ...item, ...updates } : item
+    )));
+  };
+
+  const removeFirecrawlKeyConfig = (index: number) => {
+    setFirecrawlKeys((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
+    setVisibleFirecrawlKeyIndexes((prev) => {
+      const next = new Set<number>();
+      prev.forEach((itemIndex) => {
+        if (itemIndex < index) {
+          next.add(itemIndex);
+        } else if (itemIndex > index) {
+          next.add(itemIndex - 1);
+        }
+      });
+      return next;
+    });
+  };
+
+  const toggleFirecrawlKeyVisibility = (index: number) => {
+    setVisibleFirecrawlKeyIndexes((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
 
   const loadSkillHistory = useCallback(async () => {
     setIsSkillHistoryLoading(true);
@@ -336,13 +421,16 @@ export default function DocEngineFrontend() {
   }, [loadSkillHistory, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName, skillTaskId]);
 
   const submitSkillGeneration = useCallback(async (params: {
-    date: string;
-    domain: string;
+    folders: SkillSourceFolder[];
     provider: string;
     modelId: string;
     baseUrl?: string;
     customPrompt?: string;
+    mergedName?: string;
   }) => {
+    if (params.folders.length === 0) {
+      throw new Error('Please select at least one cleaned folder');
+    }
     if (params.provider === 'openai-codex' && !codexAuth) {
       throw new Error('Please sign in with ChatGPT first');
     }
@@ -353,20 +441,20 @@ export default function DocEngineFrontend() {
     setSkillError('');
     setIsSkillSubmitting(true);
     setSkillStatus(null);
-    setSelectedFolder(`${params.date}|${params.domain}`);
+    setSelectedFolders(new Set(params.folders.map((folder) => `${folder.date}|${folder.domain}`)));
 
     try {
       const res = await fetch('/api/generate-skill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          date: params.date,
-          domain: params.domain,
+          folders: params.folders,
           provider: params.provider,
           modelId: params.modelId,
           apiKey: params.provider === 'openai-codex' ? undefined : skillApiKey,
           baseUrl: params.provider === 'openai-codex' ? undefined : params.baseUrl,
           customPrompt: params.customPrompt || undefined,
+          mergedName: params.mergedName || undefined,
           r2AccountId,
           r2AccessKeyId,
           r2SecretAccessKey,
@@ -400,6 +488,16 @@ export default function DocEngineFrontend() {
         if (parsed.urlTimeout !== undefined) setUrlTimeout(parsed.urlTimeout);
         if (parsed.enableClean !== undefined) setEnableClean(parsed.enableClean);
         if (parsed.firecrawlKey !== undefined) setFirecrawlKey(parsed.firecrawlKey);
+        if (Array.isArray(parsed.firecrawlKeys)) {
+          setFirecrawlKeys(parsed.firecrawlKeys
+            .map((item: { key?: unknown; ratePerMinute?: unknown }) => ({
+              key: typeof item.key === 'string' ? item.key : '',
+              ratePerMinute: Number.isFinite(Number(item.ratePerMinute)) && Number(item.ratePerMinute) > 0
+                ? Number(item.ratePerMinute)
+                : 10,
+            }))
+            .filter((item: FirecrawlKeyConfig) => item.key || item.ratePerMinute));
+        }
         if (parsed.llmApiKey !== undefined) setLlmApiKey(parsed.llmApiKey);
         if (parsed.llmModelName !== undefined) setLlmModelName(parsed.llmModelName);
         if (parsed.llmBaseUrl !== undefined) setLlmBaseUrl(parsed.llmBaseUrl);
@@ -492,7 +590,7 @@ export default function DocEngineFrontend() {
     if (isMounted) {
       const configObj = {
         depthLimit, maxConcurrency, maxUrls, maxRetries, urlTimeout, enableClean,
-        firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt,
+        firecrawlKey, firecrawlKeys, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt,
         urlExtractorApiKey, urlExtractorBaseUrl, urlExtractorModel, urlExtractorPrompt,
         r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName,
 
@@ -509,7 +607,7 @@ export default function DocEngineFrontend() {
     }
   }, [
     isMounted, depthLimit, maxConcurrency, maxUrls, maxRetries, urlTimeout, enableClean,
-    firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt,
+    firecrawlKey, firecrawlKeys, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt,
     urlExtractorApiKey, urlExtractorBaseUrl, urlExtractorModel, urlExtractorPrompt,
     r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName,
 
@@ -631,6 +729,7 @@ export default function DocEngineFrontend() {
     setTaskId(null);
 
     try {
+      const firecrawlMultiKeySettings = buildFirecrawlMultiKeySettings();
       const engineSettings = {
         maxUrls,
         maxConcurrency: maxConcurrency ? Number.parseInt(maxConcurrency, 10) || undefined : undefined,
@@ -638,6 +737,7 @@ export default function DocEngineFrontend() {
         urlTimeout: urlTimeout ? parseInt(urlTimeout) : undefined,
         enableClean,
         firecrawlKey: firecrawlKey || undefined,
+        ...firecrawlMultiKeySettings,
         // Content Cleaner
         llmApiKey: llmApiKey || undefined,
         llmModel: llmModelName || undefined,
@@ -691,6 +791,7 @@ export default function DocEngineFrontend() {
     setMapResultCount(null);
 
     try {
+      const firecrawlMultiKeySettings = buildFirecrawlMultiKeySettings();
       const res = await fetch('/api/map', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -699,6 +800,7 @@ export default function DocEngineFrontend() {
           search: mapSearch.trim() || undefined,
           limit: mapLimit,
           firecrawlKey: firecrawlKey || undefined,
+          ...firecrawlMultiKeySettings,
         }),
       });
 
@@ -752,12 +854,14 @@ export default function DocEngineFrontend() {
     setScrapeResult(null);
 
     try {
+      const firecrawlMultiKeySettings = buildFirecrawlMultiKeySettings();
       const res = await fetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           url: text,
           firecrawlKey: firecrawlKey || undefined,
+          ...firecrawlMultiKeySettings,
           waitFor: scrapeWaitFor || undefined,
           timeout: scrapeTimeout || undefined,
           onlyMainContent: scrapeOnlyMainContent,
@@ -822,6 +926,7 @@ export default function DocEngineFrontend() {
     setCrawlStatusText('Starting crawl exploration...');
 
     try {
+      const firecrawlMultiKeySettings = buildFirecrawlMultiKeySettings();
       // 1. Start Crawl Job
       const startRes = await fetch('/api/crawl-job', {
         method: 'POST',
@@ -829,7 +934,7 @@ export default function DocEngineFrontend() {
         body: JSON.stringify({
           url: crawlUrl.trim(),
           limit: Number(crawlLimit),
-          engineSettings: { firecrawlApiKey: firecrawlKey || undefined }
+          engineSettings: { firecrawlApiKey: firecrawlKey || undefined, ...firecrawlMultiKeySettings }
         }),
       });
       const startData = await startRes.json();
@@ -919,8 +1024,10 @@ export default function DocEngineFrontend() {
     if (!taskId || retryingUrls.has(url)) return;
     setRetryingUrls(prev => new Set(prev).add(url));
     try {
+      const firecrawlMultiKeySettings = buildFirecrawlMultiKeySettings();
       const es = {
         firecrawlKey: firecrawlKey || undefined,
+        ...firecrawlMultiKeySettings,
         llmApiKey: llmApiKey || undefined,
         llmModel: llmModelName || undefined,
         llmBaseUrl: llmBaseUrl || undefined,
@@ -946,7 +1053,7 @@ export default function DocEngineFrontend() {
         return next;
       });
     }
-  }, [taskId, retryingUrls, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, maxConcurrency, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
+  }, [taskId, retryingUrls, buildFirecrawlMultiKeySettings, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, maxConcurrency, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
 
   const handleRetryAllFailed = useCallback(async () => {
     if (!taskId || !taskStatus?.urls) return;
@@ -954,8 +1061,10 @@ export default function DocEngineFrontend() {
     if (failedList.length === 0) return;
     setRetryingUrls(new Set(failedList));
     try {
+      const firecrawlMultiKeySettings = buildFirecrawlMultiKeySettings();
       const es = {
         firecrawlKey: firecrawlKey || undefined,
+        ...firecrawlMultiKeySettings,
         llmApiKey: llmApiKey || undefined,
         llmModel: llmModelName || undefined,
         llmBaseUrl: llmBaseUrl || undefined,
@@ -977,7 +1086,7 @@ export default function DocEngineFrontend() {
     } finally {
       setRetryingUrls(new Set());
     }
-  }, [taskId, taskStatus, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, maxConcurrency, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
+  }, [taskId, taskStatus, buildFirecrawlMultiKeySettings, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, maxConcurrency, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
 
   const handleRetryTask = useCallback(async () => {
     if (!taskId || !taskStatus?.urls || taskStatus.urls.length === 0) return;
@@ -985,8 +1094,10 @@ export default function DocEngineFrontend() {
     const allUrls = taskStatus.urls.map((item) => item.url);
     setRetryingUrls(new Set(allUrls));
     try {
+      const firecrawlMultiKeySettings = buildFirecrawlMultiKeySettings();
       const es = {
         firecrawlKey: firecrawlKey || undefined,
+        ...firecrawlMultiKeySettings,
         llmApiKey: llmApiKey || undefined,
         llmModel: llmModelName || undefined,
         llmBaseUrl: llmBaseUrl || undefined,
@@ -1008,7 +1119,7 @@ export default function DocEngineFrontend() {
     } finally {
       setRetryingUrls(new Set());
     }
-  }, [taskId, taskStatus, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, maxConcurrency, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
+  }, [taskId, taskStatus, buildFirecrawlMultiKeySettings, firecrawlKey, llmApiKey, llmModelName, llmBaseUrl, cleaningPrompt, enableClean, maxConcurrency, r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName]);
 
   // 輔助函式：將異常或 0B 的檔案標示為失敗，以便重試
   const markKeysAsFailed = (failedList: { key: string, reason: string }[]) => {
@@ -2092,59 +2203,114 @@ export default function DocEngineFrontend() {
 
               {/* === 資料夾選擇器 === */}
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-semibold text-gray-700">Cleaned Folder</label>
-                  <button
-                    onClick={async () => {
-                      setIsFoldersLoading(true);
-                      try {
-                        const res = await fetch('/api/list-cleaned-folders', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName,
-                          }),
-                        });
-                        const data = await res.json();
-                        if (data.folders) setAvailableFolders(data.folders);
-                      } catch (err: unknown) {
-                        setSkillError(err instanceof Error ? err.message : 'Failed to load folders');
-                      } finally {
-                        setIsFoldersLoading(false);
-                      }
-                    }}
-                    className="text-xs text-amber-700 hover:text-amber-900 font-medium transition-colors"
-                    disabled={isFoldersLoading}
-                  >
-                    {isFoldersLoading ? 'Loading...' : '↻ Refresh'}
-                  </button>
+                <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm font-semibold text-gray-700">Cleaned Folders</label>
+                    <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-100">
+                      {selectedFolders.size} folder{selectedFolders.size === 1 ? '' : 's'} selected
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 flex-wrap justify-end">
+                    <button
+                      onClick={() => setSelectedFolders(new Set(availableFolderKeys))}
+                      className="text-xs text-violet-700 hover:text-violet-900 font-medium transition-colors disabled:opacity-50"
+                      disabled={isFoldersLoading || availableFolders.length === 0 || allAvailableFoldersSelected}
+                    >
+                      Select All
+                    </button>
+                    <button
+                      onClick={() => setSelectedFolders(new Set())}
+                      className="text-xs text-gray-500 hover:text-gray-700 font-medium transition-colors disabled:opacity-50"
+                      disabled={isFoldersLoading || selectedFolders.size === 0}
+                    >
+                      Deselect All
+                    </button>
+                    <button
+                      onClick={async () => {
+                        setIsFoldersLoading(true);
+                        try {
+                          const res = await fetch('/api/list-cleaned-folders', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2BucketName,
+                            }),
+                          });
+                          const data = await res.json();
+                          if (data.folders) {
+                            const folders = data.folders as CleanedFolderOption[];
+                            const nextKeys = new Set(folders.map((folder) => `${folder.date}|${folder.domain}`));
+                            setAvailableFolders(folders);
+                            setSelectedFolders((prev) => new Set(Array.from(prev).filter((key) => nextKeys.has(key))));
+                          }
+                        } catch (err: unknown) {
+                          setSkillError(err instanceof Error ? err.message : 'Failed to load folders');
+                        } finally {
+                          setIsFoldersLoading(false);
+                        }
+                      }}
+                      className="text-xs text-amber-700 hover:text-amber-900 font-medium transition-colors"
+                      disabled={isFoldersLoading}
+                    >
+                      {isFoldersLoading ? 'Loading...' : '↻ Refresh'}
+                    </button>
+                  </div>
                 </div>
-                <select
-                  value={selectedFolder}
-                  onChange={(e) => setSelectedFolder(e.target.value)}
-                  className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
-                >
-                  <option value="">Select a cleaned folder...</option>
-                  {availableFolders.map((f) => (
-                    <option key={f.prefix} value={`${f.date}|${f.domain}`}>
-                      {f.domain} ({f.date}) — {f.fileCount} files{f.emptyFileCount > 0 ? ` (⚠ ${f.emptyFileCount} empty)` : ''}
-                    </option>
-                  ))}
-                </select>
-                {/* 0B 檔案警告提示 */}
-                {selectedFolder && (() => {
-                  const [selDate, selDomain] = selectedFolder.split('|');
-                  const folder = availableFolders.find(f => f.date === selDate && f.domain === selDomain);
-                  if (folder && folder.emptyFileCount > 0) {
+                <div className="max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-[#FAF6F0] divide-y divide-gray-200">
+                  {availableFolders.length === 0 ? (
+                    <div className="px-4 py-3 text-sm text-gray-500">
+                      {isFoldersLoading ? 'Loading cleaned folders...' : 'No cleaned folders loaded. Click Refresh to load folders.'}
+                    </div>
+                  ) : availableFolders.map((folder) => {
+                    const key = `${folder.date}|${folder.domain}`;
                     return (
-                      <div className="mt-2 text-xs px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 flex items-start gap-2">
-                        <span className="text-base leading-none">⚠️</span>
-                        <span>This folder contains <strong>{folder.emptyFileCount}</strong> empty (0B) file{folder.emptyFileCount > 1 ? 's' : ''}. These likely failed LLM cleaning. Consider re-cleaning before generating a skill.</span>
-                      </div>
+                      <label key={folder.prefix} className="flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-white/60 transition-colors cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedFolders.has(key)}
+                          onChange={(e) => {
+                            setSelectedFolders((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) {
+                                next.add(key);
+                              } else {
+                                next.delete(key);
+                              }
+                              return next;
+                            });
+                          }}
+                          className="w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 accent-violet-600"
+                        />
+                        <span className="flex-1 min-w-0 break-all">
+                          {folder.domain} ({folder.date}) — {folder.fileCount} files
+                          {folder.emptyFileCount > 0 ? ` (${folder.emptyFileCount} empty)` : ''}
+                        </span>
+                      </label>
                     );
-                  }
-                  return null;
-                })()}
+                  })}
+                </div>
+                {/* 0B 檔案警告提示 */}
+                {selectedEmptyFileCount > 0 && (
+                  <div className="mt-2 text-xs px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 flex items-start gap-2">
+                    <span className="text-base leading-none">⚠️</span>
+                    <span>{selectedFolderDetails.length === 1 ? 'The selected folder contains' : 'The selected folders contain'} <strong>{selectedEmptyFileCount}</strong> empty (0B) file{selectedEmptyFileCount > 1 ? 's' : ''}. These likely failed LLM cleaning. Consider re-cleaning before generating a skill.</span>
+                  </div>
+                )}
+                {selectedFolders.size > 1 && (
+                  <div className="mt-3">
+                    <label className="block text-xs text-gray-500 mb-1">Merged Skill Name</label>
+                    <input
+                      type="text"
+                      value={mergedName}
+                      onChange={(e) => setMergedName(e.target.value)}
+                      placeholder="e.g. my-combined-skill (kebab-case)"
+                      className="w-full bg-[#FAF6F0] text-sm rounded-xl px-4 py-2.5 border border-gray-200 focus:border-amber-300 focus:outline-none"
+                    />
+                    <div className="mt-1 text-[11px] text-gray-500">
+                      Custom name for the merged output folder. Leave blank to use default "merged".
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* === 自訂 Prompt（可收合） === */}
@@ -2170,8 +2336,8 @@ export default function DocEngineFrontend() {
               {/* === 生成按鈕 === */}
               <button
                 onClick={async () => {
-                  if (!selectedFolder) {
-                    setSkillError('Please select a cleaned folder');
+                  if (selectedFolders.size === 0) {
+                    setSkillError('Please select at least one cleaned folder');
                     return;
                   }
                   if (skillAuthMode === 'apikey' && !skillApiKey) {
@@ -2188,21 +2354,24 @@ export default function DocEngineFrontend() {
                   }
 
                   try {
-                    const [date, domain] = selectedFolder.split('|');
+                    const folders = Array.from(selectedFolders).map((value) => {
+                      const [date, domain] = value.split('|');
+                      return { date, domain };
+                    });
                     const isOAuth = skillAuthMode === 'oauth';
                     await submitSkillGeneration({
-                      date,
-                      domain,
+                      folders,
                       provider: isOAuth ? 'openai-codex' : skillProvider,
                       modelId: isOAuth ? 'gpt-4o' : (skillUseCustomModel ? skillCustomModelId.trim() : skillModel),
                       baseUrl: isOAuth ? undefined : (skillBaseUrl.trim() || undefined),
                       customPrompt: skillCustomPrompt || undefined,
+                      mergedName: selectedFolders.size > 1 ? (mergedName.trim() || undefined) : undefined,
                     });
                   } catch (err: unknown) {
                     setSkillError(err instanceof Error ? err.message : 'Unknown error');
                   }
                 }}
-                disabled={isSkillSubmitting || !selectedFolder}
+                disabled={isSkillSubmitting || selectedFolders.size === 0}
                 className="w-full py-3 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-sm font-semibold transition-all shadow-lg shadow-violet-200/50"
               >
                 {isSkillSubmitting ? '⏳ Submitting...' : '✨ Generate Skill'}
@@ -2375,12 +2544,14 @@ export default function DocEngineFrontend() {
                                 setRetryingSkillTaskIds((prev) => new Set(prev).add(item.taskId));
                                 try {
                                   await submitSkillGeneration({
-                                    date: item.date,
-                                    domain: item.domain,
+                                    folders: item.folders && item.folders.length > 0
+                                      ? item.folders
+                                      : [{ date: item.date, domain: item.domain }],
                                     provider: item.provider || skillProvider,
                                     modelId: item.modelId || skillModel,
                                     baseUrl: item.baseUrl || undefined,
                                     customPrompt: item.customPrompt || undefined,
+                                    mergedName: item.mergedName || undefined,
                                   });
                                 } catch (err: unknown) {
                                   setSkillError(err instanceof Error ? err.message : 'Retry failed');
@@ -2526,14 +2697,109 @@ export default function DocEngineFrontend() {
                 <h2 className="text-lg font-semibold text-gray-800 mb-4">Scraping Processor</h2>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">API Key</label>
-                    <input
-                      value={firecrawlKey}
-                      onChange={(e) => setFirecrawlKey(e.target.value)}
-                      placeholder="Firecrawl API Key (Leave blank for default env)"
-                      className="w-full bg-white border border-[#E5D5C5] rounded-xl px-4 py-2.5 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none"
-                      type="password"
-                    />
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Default API Key</label>
+                    <div className="relative">
+                      <input
+                        value={firecrawlKey}
+                        onChange={(e) => setFirecrawlKey(e.target.value)}
+                        placeholder="Firecrawl API Key (Leave blank for default env)"
+                        className="w-full bg-white border border-[#E5D5C5] rounded-xl px-4 py-2.5 pr-11 text-sm text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                        type={showDefaultFirecrawlKey ? 'text' : 'password'}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowDefaultFirecrawlKey((prev) => !prev)}
+                        className="absolute inset-y-0 right-3 flex items-center text-gray-400 hover:text-gray-700 transition-colors"
+                        aria-label={showDefaultFirecrawlKey ? 'Hide default Firecrawl API key' : 'Show default Firecrawl API key'}
+                      >
+                        {showDefaultFirecrawlKey ? (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-5.523 0-10-7-10-7a18.72 18.72 0 014.583-5.638m3.089-1.63A9.956 9.956 0 0112 5c5.523 0 10 7 10 7a18.681 18.681 0 01-2.442 3.381M15 12a3 3 0 00-3-3m0 0a3 3 0 00-3 3m3-3l8.485-8.485M3 3l18 18"></path></svg>
+                        ) : (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                        )}
+                      </button>
+                    </div>
+                    <p className="mt-1 text-[11px] text-gray-500">Used when no advanced keys are configured.</p>
+                  </div>
+
+                  <div className="border border-[#E5D5C5] rounded-xl bg-white/70 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowFirecrawlKeyManager((prev) => !prev)}
+                      className="flex items-center justify-between w-full px-4 py-3 text-left text-xs font-medium text-gray-700 hover:text-gray-900 transition-colors"
+                    >
+                      <span>Advanced Key Management</span>
+                      <span className="flex items-center gap-2 text-[11px] text-gray-500">
+                        {firecrawlKeys.filter((item) => item.key.trim()).length} configured
+                        <svg className={`w-4 h-4 transition-transform ${showFirecrawlKeyManager ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                      </span>
+                    </button>
+
+                    {showFirecrawlKeyManager && (
+                      <div className="border-t border-[#E5D5C5] p-4 space-y-3">
+                        {firecrawlKeys.length === 0 && (
+                          <div className="rounded-xl border border-dashed border-[#E5D5C5] bg-[#F8F5EE] px-4 py-3 text-xs text-gray-500">
+                            No additional Firecrawl keys configured. Add keys here to rotate requests by rate limit.
+                          </div>
+                        )}
+
+                        {firecrawlKeys.map((item, index) => (
+                          <div key={index} className="grid grid-cols-1 md:grid-cols-[1fr_140px_auto] gap-3 items-end rounded-xl border border-[#E5D5C5] bg-[#F8F5EE] p-3">
+                            <div>
+                              <label className="block text-[11px] font-medium text-gray-600 mb-1">API Key</label>
+                              <div className="relative">
+                                <input
+                                  value={item.key}
+                                  onChange={(e) => updateFirecrawlKeyConfig(index, { key: e.target.value })}
+                                  placeholder="Firecrawl API Key"
+                                  className="w-full bg-white border border-[#E5D5C5] rounded-xl px-3 py-2 pr-10 text-xs text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                                  type={visibleFirecrawlKeyIndexes.has(index) ? 'text' : 'password'}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => toggleFirecrawlKeyVisibility(index)}
+                                  className="absolute inset-y-0 right-3 flex items-center text-gray-400 hover:text-gray-700 transition-colors"
+                                  aria-label={visibleFirecrawlKeyIndexes.has(index) ? `Hide Firecrawl API key ${index + 1}` : `Show Firecrawl API key ${index + 1}`}
+                                >
+                                  {visibleFirecrawlKeyIndexes.has(index) ? (
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-5.523 0-10-7-10-7a18.72 18.72 0 014.583-5.638m3.089-1.63A9.956 9.956 0 0112 5c5.523 0 10 7 10 7a18.681 18.681 0 01-2.442 3.381M15 12a3 3 0 00-3-3m0 0a3 3 0 00-3 3m3-3l8.485-8.485M3 3l18 18"></path></svg>
+                                  ) : (
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] font-medium text-gray-600 mb-1">Rate / minute</label>
+                              <input
+                                value={item.ratePerMinute}
+                                onChange={(e) => updateFirecrawlKeyConfig(index, { ratePerMinute: Math.max(1, Number.parseInt(e.target.value, 10) || 1) })}
+                                min="1"
+                                className="w-full bg-white border border-[#E5D5C5] rounded-xl px-3 py-2 text-xs text-gray-700 focus:ring-amber-500 focus:border-amber-500 outline-none"
+                                type="number"
+                              />
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => removeFirecrawlKeyConfig(index)}
+                              className="px-3 py-2 rounded-xl border border-red-200 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        ))}
+
+                        <button
+                          type="button"
+                          onClick={() => setFirecrawlKeys((prev) => [...prev, { key: '', ratePerMinute: 10 }])}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gray-900 text-white text-xs font-medium hover:bg-gray-800 transition-colors"
+                        >
+                          <span>+ Add Key</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-700 mb-1">Provider Engine</label>

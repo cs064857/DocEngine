@@ -14,7 +14,7 @@ test('shouldShowAdvancedEngineSettings returns true for all source types', () =>
 
 test('getAdvancedEngineSettingsHint returns batch-only hint in scrape mode', () => {
   const hint = getAdvancedEngineSettingsHint('scrape');
-  assert.equal(typeof hint, 'string');
+  assert.ok(typeof hint === 'string');
   assert.match(hint, /Batch/i);
 });
 

@@ -119,6 +119,20 @@ export function buildSkillVersionPrefix(date: string, domain: string, taskId: st
   return `skills/${date}/${domain}/${taskId}/`;
 }
 
+export function sanitizeSkillPathName(value?: string, fallback = 'merged'): string {
+  const sanitized = (value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return sanitized || fallback;
+}
+
+export function buildMergedSkillVersionPrefix(dates: string[], taskId: string, name?: string): string {
+  return buildSkillVersionPrefix(dates[0] || 'merged', sanitizeSkillPathName(name), taskId);
+}
+
 export function buildLegacySkillPrefix(date: string, domain: string): string {
   return `skills/${date}/${domain}/`;
 }

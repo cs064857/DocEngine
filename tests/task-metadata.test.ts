@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildMergedSkillVersionPrefix,
   buildSkillVersionPrefix,
   formatStoredDate,
   getTaskDisplayDate,
@@ -53,6 +54,27 @@ test('buildSkillVersionPrefix creates isolated folders per task version', () => 
   assert.equal(
     buildSkillVersionPrefix('20260415', 'docs.firecrawl.dev', 'task-123'),
     'skills/20260415/docs.firecrawl.dev/task-123/'
+  );
+});
+
+test('buildMergedSkillVersionPrefix creates a stable merged skill folder', () => {
+  assert.equal(
+    buildMergedSkillVersionPrefix(['20260416', '20260415'], 'task-merged'),
+    'skills/20260416/merged/task-merged/'
+  );
+});
+
+test('buildMergedSkillVersionPrefix uses a sanitized custom merged skill name', () => {
+  assert.equal(
+    buildMergedSkillVersionPrefix(['20260416', '20260415'], 'task-merged', ' My Combined/Skill! '),
+    'skills/20260416/my-combined-skill/task-merged/'
+  );
+});
+
+test('buildMergedSkillVersionPrefix falls back when custom merged skill name sanitizes empty', () => {
+  assert.equal(
+    buildMergedSkillVersionPrefix(['20260416'], 'task-merged', '///'),
+    'skills/20260416/merged/task-merged/'
   );
 });
 

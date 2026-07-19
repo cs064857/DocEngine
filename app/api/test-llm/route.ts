@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
           apiKey: apiKey || undefined,
           baseUrl: baseUrl || undefined,
           temperature: 0,
-          maxTokens: 10,
+          maxTokens: 2048,
         }),
         timeoutPromise,
       ]);
