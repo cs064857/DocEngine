@@ -1,23 +1,52 @@
 # lib/config.ts
 
-## 職責契約
-此模組是專案的執行期設定匯流點，將環境變數整理為結構化 `config` 物件，供外部整合、R2 儲存與專案級限制統一取用。它只負責讀取與預設值回填；嚴禁承擔設定驗證、祕密輪替、動態熱更新、外部連線建立或業務流程決策。
+## 職責契約 (Responsibility Contract)
 
-## 接口摘要
-### `config`
-- **`firecrawl`**：`apiKey`、`apiUrl`；供抓取與映射服務使用。
-- **`llm.urlExtractor`**：`baseUrl`、`apiKey`、`model`；供網址抽取流程使用。
-- **`llm.contentCleaner`**：`baseUrl`、`apiKey`、`model`；供內容清洗流程使用。
-- **`r2`**：`accountId`、`accessKeyId`、`secretAccessKey`、`bucketName`；作為儲存層預設憑證與 Bucket 來源。
-- **`project`**：`maxUrlsLimit`、`retryAttempts`；作為任務建立與重試策略的全域預設值。
-- **副作用**：模組載入時讀取 `process.env`，並將部分字串型設定轉成數值。
-- **約束**：部分第三方服務金鑰以非空斷言表示部署時必須提供；R2 欄位允許空字串，將缺值判斷延後到真正使用 `lib/r2.ts` 時處理。
+本模組是後端/服務層的 **唯一環境變數彙總點（Server Config Facade）**。它只做：從 `process.env` 解析、給預設值、正規化成結構化 `config` 物件。
 
-## 依賴拓撲
-`process.env` → `lib/config.ts` →
-- `lib/r2.ts`：解析預設 R2 憑證與 bucket。
-- `app/api/crawl/route.ts`、`app/api/queues/process-url/route.ts`：讀取 URL 上限與重試次數。
-- `app/api/map/route.ts`、`lib/services/crawler.ts`、`lib/processors/*`：讀取 Firecrawl 與 LLM 服務設定。
+**負責**：
+- Firecrawl：單/多 API Key、API URL、每 key 速率、預設 RPM、冷卻秒數
+- LLM 三子系統預設：urlExtractor / contentCleaner / skillGenerator（含 pi auth 路徑）
+- R2 預設憑證與 bucket
+- 專案級上限：`maxUrlsLimit`、`retryAttempts`
 
-- 在本 bundle 內，`lib/config.ts` 是 `lib/r2.ts` 的上游設定根節點。
-- `app/api/files/route.ts` 不直接依賴它，而是透過 `lib/r2.ts` 間接繼承其 R2 預設值。
+**嚴禁**：
+- 發起 HTTP、寫檔、持有連線
+- 前端讀取（本檔依賴 `process.env`，僅供 server/lib 使用）
+- 業務決策（誰該用哪個 key、何時重試——那是 key-manager / dispatch 的事）
+
+## 接口摘要 (Interface Summary)
+
+`export const config` — 唯讀結構化設定。
+
+| 命名空間 | 關鍵欄位 | 來源 env（概念） | 預設/行為 |
+|----------|----------|------------------|-----------|
+| `firecrawl` | `apiKey`, `apiKeys[]`, `apiUrl`, `keyRates`, `defaultRatePerMinute`, `rateLimitCooldownSeconds` | `FIRECRAWL_API_KEY(S)`, `FIRECRAWL_API_URL`, `FIRECRAWL_KEY_RATES`, `FIRECRAWL_*_RATE*` | 多 key 去重合併；URL 預設 firecrawl.dev；RPM 預設 10；冷卻 60s |
+| `llm.urlExtractor` | baseUrl, apiKey, model | `URL_EXTRACTOR_*` | DeepSeek 相容預設 |
+| `llm.contentCleaner` | baseUrl, apiKey, model | `CONTENT_CLEANER_*` | 智譜 GLM 預設 |
+| `llm.skillGenerator` | provider, modelId, apiKey, authJsonPath, baseUrl | `SKILL_GENERATOR_*`, `PI_AUTH_JSON_PATH` | openai/gpt-4o；auth 路徑 `./auth.json` |
+| `r2` | accountId, accessKeyId, secretAccessKey, bucketName | `R2_*` | bucket 預設 `crawldocs` |
+| `project` | maxUrlsLimit, retryAttempts | `MAX_URLS_LIMIT`, `RETRY_ATTEMPTS` | 1000 / 3 |
+
+內部私有解析（不 export）：
+- `parseCsvEnv` — CSV → string[]
+- `parsePositiveInteger` — 正整數或 fallback
+- `parseFirecrawlKeyRates` — `key:rate` CSV → `Record<string, number>`
+
+## 依賴拓撲 (Dependency Topology)
+
+```
+process.env
+      │
+      ▼
+lib/config.ts  ← 本模組
+      │
+      ├──→ lib/services/*（crawler、dispatch、firecrawl-key-manager、llm、pi-llm…）
+      ├──→ lib/r2.ts / processors/*
+      └──→ app/api/**/route.ts（後端預設值；請求體可覆寫）
+
+前端 app/page.tsx ──不直接依賴──→ config
+（前端用 localStorage + 請求 engineSettings/R2 overrides 覆寫後端預設）
+```
+
+與本 bundle 關係：與 `next.config` 正交（業務 env vs 框架設定）；為整站 server 側預設值來源，`layout`/`page` 不 import 本檔。

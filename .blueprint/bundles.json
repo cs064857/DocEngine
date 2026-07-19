@@ -1,53 +1,144 @@
 {
   "bundles": [
     {
-      "id": "nextjs-app-shell",
-      "summary": "Next.js 應用外殼與全域入口設定，涵蓋框架型別宣告、建置設定與根頁面結構。",
+      "bundle_id": "bundle_1",
+      "name": "app-shell-and-config",
       "files": [
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/next-env.d.ts",
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/next.config.ts",
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/layout.tsx",
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/page.tsx"
-      ]
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\next-env.d.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\next.config.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\layout.tsx",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\page.tsx",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\config.ts"
+      ],
+      "rationale": "Next.js 應用殼層與全域設定：根 layout/page、next 設定與 lib/config"
     },
     {
-      "id": "crawl-ingestion-api",
-      "summary": "面向抓取、爬行與網址映射的 API 入口",
+      "bundle_id": "bundle_2",
+      "name": "crawl-services-and-tests",
       "files": [
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/crawl/route.ts",
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/map/route.ts",
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/scrape/route.ts"
-      ]
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\services\\crawler.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\services\\crawl-concurrency.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\services\\crawl-dispatch.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\services\\scrape-task.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\services\\firecrawl-key-manager.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\tests\\crawl-concurrency.test.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\tests\\crawl-dispatch.test.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\tests\\scrape-task.test.ts"
+      ],
+      "rationale": "爬取核心服務層：crawler/dispatch/concurrency/scrape-task/firecrawl key 與對應單元測試"
     },
     {
-      "id": "task-queue-orchestration-api",
-      "summary": "非同步任務建立、佇列處理與狀態查詢相關 API",
+      "bundle_id": "bundle_3",
+      "name": "crawl-api-routes",
       "files": [
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/crawl-job/route.ts",
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/queues/process-url/route.ts",
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/status/[taskId]/route.ts",
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/tasks/route.ts"
-      ]
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\crawl\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\crawl-job\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\map\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\scrape\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\queues\\process-url\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\retry\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\abort\\route.ts"
+      ],
+      "rationale": "爬取/抓取 HTTP API：啟動 crawl/scrape/map、佇列 process-url、retry 與 abort"
     },
     {
-      "id": "storage-config-runtime-support",
-      "summary": "檔案存取 API 與執行期基礎設施支援，涵蓋設定載入、R2 儲存適配與共用命名/路徑輔助。",
+      "bundle_id": "bundle_4",
+      "name": "clean-and-files",
       "files": [
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/app/api/files/route.ts",
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/lib/config.ts",
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/lib/r2.ts",
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/lib/utils/helpers.ts"
-      ]
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\clean\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\files\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\list-cleaned-folders\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\processors\\cleaner.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\processors\\url-extractor.ts"
+      ],
+      "rationale": "清理與檔案處理域：clean/files/list-cleaned-folders API 與 cleaner/url-extractor processors"
     },
     {
-      "id": "crawl-processing-services",
-      "summary": "爬蟲服務、LLM 處理與內容清洗/網址抽取流程核心",
+      "bundle_id": "bundle_5",
+      "name": "skill-api-routes",
       "files": [
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/lib/processors/cleaner.ts",
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/lib/processors/url-extractor.ts",
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/lib/services/crawler.ts",
-        "G:/MyProgram/ClaudeCodeProject/CrawlDocs/crawldocs-web/lib/services/llm.ts"
-      ]
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\generate-skill\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\skill-download\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\skill-status\\[taskId]\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\skill-tasks\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\abort-skill\\route.ts"
+      ],
+      "rationale": "Skill 生命週期 API：產生、任務列表、狀態查詢、下載、中止"
+    },
+    {
+      "bundle_id": "bundle_6",
+      "name": "skill-lib-and-tests",
+      "files": [
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\processors\\skill-generator.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\prompts\\skill-generator.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\services\\skill-task-control.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\utils\\skill-task-status.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\tests\\skill-task-control.test.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\tests\\skill-task-status.test.ts"
+      ],
+      "rationale": "Skill 產生與任務控制核心：processor/prompt/service/status util 與對應測試"
+    },
+    {
+      "bundle_id": "bundle_7",
+      "name": "task-tracking",
+      "files": [
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\status\\[taskId]\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\tasks\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\utils\\task-metadata.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\utils\\task-progress-drawer.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\tests\\task-metadata.test.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\tests\\task-progress-drawer.test.ts"
+      ],
+      "rationale": "一般爬取任務追蹤：tasks/status API、metadata/progress-drawer utils 與測試"
+    },
+    {
+      "bundle_id": "bundle_8",
+      "name": "llm-and-auth",
+      "files": [
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\codex-auth\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\pi-models\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\app\\api\\test-llm\\route.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\oauth\\pi-auth.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\services\\llm.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\services\\pi-llm.ts"
+      ],
+      "rationale": "LLM 與認證域：codex/pi 認證、pi-models、test-llm API 與 llm/pi-llm/pi-auth 服務"
+    },
+    {
+      "bundle_id": "bundle_9",
+      "name": "shared-utils-and-storage",
+      "files": [
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\r2.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\utils\\download.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\utils\\helpers.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\lib\\utils\\advanced-engine-settings-ui.ts",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\tests\\advanced-engine-settings-ui.test.ts"
+      ],
+      "rationale": "跨域共用基礎設施：R2 儲存、download/helpers、進階引擎 UI 設定與測試"
+    },
+    {
+      "bundle_id": "bundle_10",
+      "name": "skill-creator-eval-benchmark",
+      "files": [
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\skill-creator\\eval-viewer\\generate_review.py",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\skill-creator\\scripts\\aggregate_benchmark.py",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\skill-creator\\scripts\\generate_report.py",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\skill-creator\\scripts\\run_eval.py",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\skill-creator\\scripts\\run_loop.py"
+      ],
+      "rationale": "skill-creator 評測與基準迴圈：run_eval/run_loop、benchmark 彙總、report 與 review 產生"
+    },
+    {
+      "bundle_id": "bundle_11",
+      "name": "skill-creator-packaging-utils",
+      "files": [
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\skill-creator\\scripts\\package_skill.py",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\skill-creator\\scripts\\quick_validate.py",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\skill-creator\\scripts\\improve_description.py",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\skill-creator\\scripts\\utils.py",
+        "G:\\MyProgram\\ClaudeCodeProject\\CrawlDocs\\crawldocs-web\\skill-creator\\scripts\\__init__.py"
+      ],
+      "rationale": "skill-creator 打包與工具：package/validate/improve_description 與共用 utils/__init__"
     }
   ]
 }

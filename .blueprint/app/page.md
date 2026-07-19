@@ -1,39 +1,79 @@
-## 職責契約
+# app/page.tsx
 
-此模組是 DocEngine 首頁的客戶端控制台，負責承接使用者輸入、切換 `scrape / crawl / map` 三種入口模式、管理設定表單、保存本地配置、觸發後端 API，並把即時抓取結果或非同步任務狀態投影到 UI。它只做前端編排與狀態呈現，不在前端真正執行爬取、清洗、URL 抽取或 R2 寫入邏輯。
+## 職責契約 (Responsibility Contract)
 
-## 接口摘要
+本模組是 DocEngine 的 **單一客戶端前端（Client Shell）**：彙整全部使用者操作面，將設定、任務編排與進度展示集中於一頁五分頁（Tasks / Create / Skill / Storage / Settings）。
 
-- `DocEngineFrontend()`
-  - **輸入**：無 props。
-  - **輸出**：四分頁單頁控制台：`create`、`tasks`、`storage`、`settings`。
-  - **副作用**：讀寫 `localStorage.docengineConfig`；根據 `taskId` 啟動輪詢；在 `tasks` 分頁載入歷史任務。
-- `JobTask`
-  - **資料形狀**：描述任務 `taskId`、`status`、`total/completed/failed`、失敗 URL、重試 URL、日期與 URL 詳情清單。
-  - **用途**：統一首頁監控板與歷史任務清單的狀態模型。
-- `fetchFileSizes()`（UI 內部命令）
-  - **輸入**：`taskStatus` 中的日期與成功 URL。
-  - **副作用**：向 `/api/files` 查詢對應 `raw/` 與 `cleaned/` 目錄，更新本地 `fileSizes` 映射。
-- `handleDownloadSingle(url, type)` / `handleDownloadAll(type)`（UI 內部命令）
-  - **輸入**：目標 URL 與類別 (`raw` | `cleaned`)。
-  - **副作用**：觸發瀏覽器下載單一 Markdown 或將整個任務目錄打包成 ZIP 下載。
-- `handleCleanSingle(url)`（UI 內部命令）
-  - **輸入**：目標 URL 與日期。
-  - **副作用**：呼叫 `/api/clean` 針對 R2 中的 raw 檔案執行手動 LLM 清洗，並覆寫 cleaned 版本。
-- `handleSubmit(customInput?)`（UI 內部命令）
-  - **輸入**：Sitemap、URL 清單或外部傳入的整理後輸入；並攜帶 engine settings、Cleaner、Extractor、R2 覆蓋配置。
-  - **副作用**：POST `/api/crawl` 建立批次任務；重置監控狀態。
+**負責**：
+- 使用者設定的 localStorage 持久化（`docengineConfig`）
+- 爬取三種入口：Scrape / Crawl / Map → 對應後端 API
+- 任務輪詢、Drawer 進度、單 URL 重試/中止、R2 下載與單檔清洗
+- Skill 產生生命週期：提交、輪詢、中止、歷史、OAuth/API Key 模式
+- LLM 連線測試（Cleaner / Extractor / Skill）
 
-## 依賴拓撲
+**嚴禁**：
+- 直接呼叫 Firecrawl / LLM / R2 SDK（一律經由 `/api/*` 或 `lib/services/crawler` 薄封裝）
+- 服務端業務決策（限流、key 輪替、佇列派發屬後端）
+- 拆成多 route 頁面（刻意 monomorphic SPA-in-page）
 
-`next-env.d.ts`（型別基底）
-→ `next.config.ts`（框架執行邊界）
-→ `app/layout.tsx`（全站文件殼層）
-→ `app/page.tsx`（首頁互動與流程編排）
+## 接口摘要 (Interface Summary)
 
-`app/page.tsx` 對外延伸的流程：
+`export default function DocEngineFrontend()` — 無 props 的 client component。
 
-- `scrape` 單頁預覽：`app/page.tsx` → `/api/scrape`
-- `map` 網址發掘：`app/page.tsx` → `/api/map`
-- `crawl` 探索轉佇列：`app/page.tsx` → `/api/crawl-job` → `handleSubmit()`
-- 任務監控/清理/下載：`app/page.tsx` → `/api/status/[taskId]`, `/api/clean`, `/api/files`
+### 分頁與主要操作（行為契約）
+
+| 操作 | 觸發 API / 服務 | 輸入形狀（概念） | 副作用 |
+|------|-----------------|------------------|--------|
+| `handleSubmit` | `POST /api/crawl` | `{ input, engineSettings }` | 取得 `taskId`，啟動 3s 輪詢 |
+| `handleScrape` | 單 URL → `POST /api/scrape`；多 URL/sitemap → 轉 `handleSubmit` | scrape 參數 + LLM/R2 覆蓋 | 預覽 markdown / 或進佇列 |
+| `handleCrawl` | `POST/GET /api/crawl-job` → 完成後 `handleSubmit` | base URL + limit | 探索連結再入隊 |
+| `handleMapFetch` | `POST /api/map` | url/search/limit | 將 URL 列表併入 `inputValue` |
+| 狀態輪詢 | `GET|POST /api/status/:taskId` | 可選 R2 overrides body | 更新 `taskStatus` |
+| 歷史任務 | `GET|POST /api/tasks` | 可選 R2 overrides | 填入 `tasksList` |
+| 重試/中止 | `POST /api/retry`、`POST /api/abort` | taskId + urls + engineSettings | 更新重試中集合 |
+| 清洗單檔 | `POST /api/clean` | url + date + LLM/R2 | 刷新檔案大小 |
+| 下載 | `downloadSingleFile` / `downloadFolderAsZip` | R2 key/prefix + r2Config | 本機下載；空檔標記 failed |
+| Skill 提交 | `POST /api/generate-skill` | date/domain/provider/model/auth/R2 | `skillTaskId` + 輪詢 |
+| Skill 輪詢/歷史/中止 | `/api/skill-status/:id`、`/api/skill-tasks`、`/api/abort-skill` | R2 overrides | 更新 skill 狀態與歷史 |
+| pi 模型表 | `GET /api/pi-models` | 無 | 填入 provider/model 下拉 |
+| 設定持久化 | `localStorage.docengineConfig` | 引擎/LLM/R2/Skill 金鑰與參數 | mount 載入、變更寫回 |
+
+### 關鍵狀態域
+
+- **引擎**：sourceType、concurrency/retries/timeout、enableClean、firecrawlKey
+- **LLM**：cleaner / urlExtractor 的 key、baseUrl、model、prompt（含預設 RAG 清理提示）
+- **R2**：account/access/secret/bucket（可覆寫後端 env）
+- **任務**：taskId、taskStatus、drawer、retry/abort 集合
+- **Skill**：authMode、provider/model、piProviders、skillTask 生命週期
+
+### 依賴的薄工具（非本檔實作）
+
+- `startCrawlJob` / `checkCrawlJob`（`lib/services/crawler`）— 現況主路徑多直接 `fetch` API
+- `buildR2Key`、`download*`、`shouldShowAdvancedEngineSettings*`、`getTaskDisplayDate`、`shouldAutoOpenTaskDrawer`、`isSkillTask*`
+
+## 依賴拓撲 (Dependency Topology)
+
+```
+app/layout.tsx
+      └── app/page.tsx  ← 本模組（Client Shell / 唯一 UI 編排中心）
+              │
+              ├── localStorage（docengineConfig）
+              │
+              ├── 爬取流
+              │     POST /api/crawl | scrape | map | crawl-job
+              │     POST /api/retry | abort | clean
+              │     GET|POST /api/status/:id | /api/tasks | /api/files
+              │
+              ├── Skill 流
+              │     POST /api/generate-skill | abort-skill | skill-status | skill-tasks
+              │     GET  /api/pi-models | codex-auth 相關
+              │
+              └── 共用 lib（本 bundle 外）
+                    helpers / download / task-metadata / task-progress-drawer
+                    advanced-engine-settings-ui / skill-task-status
+                    services/crawler（薄客戶端）
+```
+
+與本 bundle 關係：
+- 掛在 `layout` 之下，不讀 `lib/config`（後端 env 由 API 使用；前端用 localStorage + 請求體覆蓋）。
+- `next.config` 的 body 上限間接支撐本頁大 prompt 提交。

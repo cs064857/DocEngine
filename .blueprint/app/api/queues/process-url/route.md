@@ -1,32 +1,32 @@
-# `app/api/queues/process-url/route.ts`
+# POST /api/queues/process-url
 
 ## 職責契約
 
-- 此模組是 **Vercel Queue 的單筆 URL worker 入口**：接收 `taskId + url + engineSettings` 訊息後，串接抓取、清洗、R2 儲存與任務狀態回寫。
-- 它的責任邊界是「處理一個 URL」，而不是抽取 URL 清單、建立整體任務、提供查詢接口，或決定前端如何輪詢。
-- 它同時承擔失敗重試協定：在非最終失敗時記錄 retrying 狀態並要求 queue 重新投遞；在最終失敗時落地為任務失敗統計。
+Vercel Queue **回呼端點**：消費單筆 `CrawlJobPayload`，執行實際 crawl 處理與重試策略。
+
+- **做**：以 `@vercel/queue` `handleCallback` 綁定 worker；呼叫 `processCrawlJob`；依 `getCrawlRetryDirective` 決定是否再投遞。
+- **不做**：建立任務、抽出 URL、對外 REST 契約設計、使用者主動 abort 狀態改寫（分屬 crawl / retry / abort）。
 
 ## 接口摘要
 
-### `POST(message, metadata)`
+`POST = handleCallback<CrawlJobPayload>(handler, { retry })`
 
-- **輸入**：`CrawlJobPayload`，核心欄位為 `taskId`、`url`、`date`；`engineSettings` 可覆蓋 Firecrawl、LLM Cleaner、R2、超時與最大重試次數。
-- **輸出**：無直接 HTTP 業務回應。
-- **副作用**：
-  - **標記處理中**：呼叫 `markUrlProcessing` 更新 R2 狀態，避免 pending 卡住。
-  - **超時包裝**：使用 `withTimeout` 包裹整體流程，超時則拋出錯誤。
-  - **流程執行**：呼叫 `scrapeUrl` 抓取並寫入 R2（raw/cleaned）。
-  - **狀態統計**：更新任務總體進度。
-- **約束**：
-  - `enableClean !== false` 且原始內容非空時執行 LLM 清洗。
-  - 超時時間由 `engineSettings.urlTimeout` 決定（預設 300s）。
+| 面向 | 形狀 |
+|------|------|
+| **Input (message)** | `CrawlJobPayload`：`{ taskId, url, date, engineSettings? }` |
+| **Input (metadata)** | 至少使用 `deliveryCount` |
+| **Side Effect** | `processCrawlJob` 更新 R2 任務進度、執行 scrape/crawl、可能寫檔 |
+| **Retry** | `getCrawlRetryDirective(error, deliveryCount)` 回傳佇列重試指示 |
+| **Constraints** | 僅供 Queue 基礎設施呼叫，非前端直連業務 API |
 
 ## 依賴拓撲
 
-- Queue producer（`/api/crawl`，bundle 外）→ **`/api/queues/process-url`** → `lib/services/crawler.scrapeUrl`
-- **`/api/queues/process-url`** → `lib/processors/cleaner.cleanContent`（可選）
-- **`/api/queues/process-url`** → `lib/utils/helpers.buildR2Key` → `lib/r2.putObject`
-- **`/api/queues/process-url`** → `lib/r2.getTaskStatus` / `putTaskStatus` → `tasks/{taskId}.json`
-- 與本 bundle 其他檔案的關係：
-  - 它是 `app/api/status/[taskId]/route.ts` 與 `app/api/tasks/route.ts` 的**主要寫端**；後兩者讀取的任務進度、失敗清單、重試資訊都來自此模組的回寫結果。
-  - 它與 `app/api/crawl-job/route.ts` 同樣屬非同步管線，但兩者不共享狀態模型：本檔案落地到 R2 任務檔，`crawl-job` 則維持 Firecrawl job 狀態。
+```
+dispatchCrawlJobs (mode=queue)
+  → Vercel Queue
+    → **POST /api/queues/process-url**
+         ├→ processCrawlJob(message, { deliveryCount })
+         └→ getCrawlRetryDirective (on failure)
+```
+
+同 bundle：`crawl` / `retry` 是生產者；本路由是消費者。`abort` 只改 R2 狀態，不取消已在途的 queue message（語意為標記失敗）。

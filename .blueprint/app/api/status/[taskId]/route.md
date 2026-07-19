@@ -1,28 +1,29 @@
-# `app/api/status/[taskId]/route.ts`
+# GET|POST /api/status/[taskId]
 
 ## 職責契約
-- 此模組提供 **單一任務狀態的讀取接口**，把 R2 中的 `tasks/{taskId}.json` 直接投影為對外 API 回應。
-- 它支援兩種查詢模式：使用環境預設 R2 憑證的向後相容 GET，以及允許前端臨時覆蓋 R2 認證的 POST。
-- 它**不負責**建立任務、更新進度、推導聚合列表，也不修復任何狀態不一致；它只是 read model gateway。
+
+單一爬取任務的**狀態查詢端點**：依 `taskId` 從 R2 讀取 `JobTask` 並回傳。
+
+- **做**：路徑參數校驗；GET 用環境預設 R2；POST 可帶 `r2Overrides` 查詢；404/400/500 錯誤形狀。
+- **不做**：任務列表、狀態寫入、abort/retry、進度 UI 決策、domain 彙總（列表側才 normalize）。
 
 ## 接口摘要
-### `GET(request, { params })`
-- **輸入**：path 參數 `taskId`。
-- **輸出**：成功時回傳 `JobTask`；缺少 `taskId` 回 `400`；查無任務回 `404`；其他錯誤回 `500`。
-- **副作用**：讀取預設 R2 bucket 中的任務 JSON。
-- **約束**：不接受額外查詢條件，固定使用環境變數配置。
 
-### `POST(request, { params })`
-- **輸入**：path 參數 `taskId`，以及可選 body：`r2AccountId`、`r2AccessKeyId`、`r2SecretAccessKey`、`r2BucketName`。
-- **輸出**：與 GET 相同，差異僅在資料來源可被 body 覆蓋。
-- **副作用**：依前端提供的覆蓋憑證讀取指定 R2 bucket 中的任務 JSON。
-- **約束**：只有任一 R2 認證欄位存在時才會啟用覆蓋模式。
+`GET(req, { params })` / `POST(req, { params })` → `NextResponse`
+
+| 面向 | 形狀 |
+|------|------|
+| **Input (path)** | `taskId: string`（必填） |
+| **Input (POST body)** | 可選 `{ r2AccountId?, r2AccessKeyId?, r2SecretAccessKey?, r2BucketName? }` → 組裝 `R2Overrides` |
+| **Output 200** | `JobTask` 原樣 JSON（`getTaskStatus` 結果） |
+| **Output** | 400 缺 taskId；404 Task not found；500 Internal Server Error |
+| **Side Effect** | 僅讀 R2；無寫入 |
 
 ## 依賴拓撲
-- `app/api/status/[taskId]` → `lib/r2.getTaskStatus` → `tasks/{taskId}.json`
-- 寫入來源主要來自：
-  - 任務初始化（`/api/crawl`，bundle 外）建立 `processing` 骨架。
-  - `app/api/queues/process-url/route.ts` 持續回寫 `completed`、`failed`、`retryingUrls` 與最終 `status`。
-- 與本 bundle 其他檔案的關係：
-  - 與 `app/api/tasks/route.ts` 共享同一個 `JobTask` 儲存模型，但本檔案只處理**單筆查詢**。
-  - 與 `app/api/crawl-job/route.ts` 沒有直接資料相依；`crawl-job` 查的是 Firecrawl job，這裡查的是本地 R2 任務檔。
+
+```
+Client → **GET|POST /api/status/[taskId]**
+            └→ getTaskStatus(taskId, r2Overrides?)  (@/lib/r2)
+```
+
+同 bundle：與 `tasks` 對稱——本端點查單筆、不 normalize；`tasks` 列最近 20 筆並補 domain 摘要。UI 輪詢此端點後可餵給 `shouldAutoOpenTaskDrawer`。

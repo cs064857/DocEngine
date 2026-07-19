@@ -2,49 +2,34 @@
 
 ## 職責契約
 
-此模組提供最薄的一層 OpenAI 相容 Chat Completion 呼叫能力，負責組裝 payload、正規化 endpoint、附帶授權標頭、處理重試退避，以及把回應收斂為單純字串內容。它是 bundle 內所有 LLM 依賴的共同基礎設施。
+本模組是 **Content Cleaner 路徑的 OpenAI-compatible Chat Completions 薄客戶端**：純 `fetch`、無 SDK，對任意相容端點做單次 completion。
 
-它**不負責**決定 prompt 策略、內容清洗規則、URL 抽取語意、任務編排或結果持久化；它只保證「把訊息送到相容端點，並把第一個 completion 的文字內容拿回來」。
+- **做**：組 payload、正規化 endpoint（補 `/chat/completions`）、Bearer 認證、指數退避重試（最多 3 次）、回傳 `choices[0].message.content` 字串。
+- **不做**：pi-ai provider/registry、OAuth/auth.json、模型清單、業務 prompt 組裝（cleaner/skill-generator 各自負責）。
 
 ## 接口摘要
 
-### `LLMConfig`
+型別（契約形狀）：
+- `LLMConfig`：`{ baseUrl, apiKey, model }`
+- `ChatMessage`：`role ∈ system|user|assistant` + `content`
+- `ChatOptions`：`responseFormat?`（`text`|`json_object`）、`temperature?`
 
-- **欄位**：`baseUrl`、`apiKey`、`model`。
-- **用途**：描述單次 chat completion 的連線與模型配置。
+`chatCompletion(configParams, messages, options?) → Promise<string>`
 
-### `ChatMessage`
-
-- **欄位**：`role`（`system | user | assistant`）、`content`。
-- **用途**：描述對話訊息形狀。
-
-### `ChatOptions`
-
-- **欄位**：`responseFormat?`、`temperature?`。
-- **用途**：控制是否要求 JSON 物件輸出及採樣溫度。
-
-### `chatCompletion(configParams, messages, options?)`
-
-- **Input**：
-  - `configParams`: `{ baseUrl: string; apiKey: string; model: string }`
-  - `messages`: OpenAI 相容訊息陣列
-  - `options?`: `responseFormat`、`temperature`
-- **Output**：`Promise<string>`；回傳第一個 choice 的 `message.content`。
-- **Side Effect**：對外發送 HTTP POST；記錄 request / retry log；在失敗時做指數退避等待。
-- **Constraints**：
-  - 最多重試 3 次。
-  - 若 `baseUrl` 未以 `/chat/completions` 結尾，會自動補齊。
-  - `responseFormat === 'json_object'` 時會在 payload 中注入 `response_format`。
+| 面向 | 說明 |
+|------|------|
+| **Input** | baseUrl/apiKey/model 必填；messages 為 OpenAI 風格陣列 |
+| **Output** | 助理文字內容 |
+| **Side Effect** | HTTP POST 外部 LLM；失敗重試 delay 2^n 秒 |
+| **Constraints** | `responseFormat=json_object` 時注入 `response_format`；3 次後拋原錯 |
 
 ## 依賴拓撲
 
-- `lib/processors/cleaner.ts` → **`chatCompletion()`** → 內容清洗 LLM
-- `lib/processors/url-extractor.ts` → **`chatCompletion()`** → URL 抽取 LLM
-- API routes **不直接依賴此模組**；它位於 bundle 最底層，作為 processor 層的共用外部通訊適配器。
-
-```mermaid
-graph LR
-  Cleaner[cleaner.ts] --> LLM[llm.ts]
-  UrlExtractor[url-extractor.ts] --> LLM
-  LLM --> Providers[OpenAI 相容 API]
 ```
+Content Cleaner / test-llm（無 provider）
+        │
+        ▼
+  **chatCompletion** ──► fetch → OpenAI-compatible /chat/completions
+```
+
+Bundle 內：與 `pi-llm` **平行、互不 import**——前者給 cleaner 直連；後者給 skill-generator（pi-ai + Codex OAuth）。`test-llm` 依 body 有無 `provider` 二選一。

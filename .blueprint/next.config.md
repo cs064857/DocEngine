@@ -1,19 +1,33 @@
-## 職責契約
-此模組是專案的 Next.js 框架級設定入口，目前唯一明確職責是調整 Server Actions 的請求體大小上限，讓框架層可以接受較大的提交內容。它不負責頁面佈局、資料抓取、任務狀態管理或任何 DocEngine 業務流程。
+# next.config.ts
 
-## 接口摘要
-- `nextConfig: NextConfig`
-  - **輸入**：無；由模組內靜態宣告。
-  - **輸出**：Next.js 可讀取的全域設定物件。
-  - **關鍵設定**：`experimental.serverActions.bodySizeLimit = "4mb"`。
-  - **副作用**：改變整個應用在 Server Actions 場景下可接受的 request body 上限。
-- `export default nextConfig`
-  - **輸入**：由 Next 啟動與建置流程載入。
-  - **輸出**：成為 App Router 的框架執行邊界之一。
+## 職責契約 (Responsibility Contract)
 
-## 依賴拓撲
-`Next CLI / Build Runtime` → `next.config.ts` → `App Router`
-                                              ↘ `app/layout.tsx`
-                                              ↘ `app/page.tsx`
+本檔僅負責 Next.js 執行期與建置層的全域行為設定。它**只宣告**框架級選項，**嚴禁**承載業務邏輯、環境變數解析或 API 路由行為。
 
-在本 bundle 中，它不是被 `layout.tsx` 或 `page.tsx` 直接 import 的模組，而是先於兩者生效的框架設定層；其影響以全域執行規則形式下沉到頁面殼層與首頁入口。
+具體承諾：
+- 放寬 Server Actions 請求體上限（4mb），以容納較大的前端提交負載。
+- 將 `@mariozechner/pi-ai`、`@vercel/queue` 標為 `serverExternalPackages`，避免被打包進 serverless bundle 造成相容性問題。
+
+**不做**：路由規則、重導向、影像優化、業務 feature flag。
+
+## 接口摘要 (Interface Summary)
+
+`default export nextConfig: NextConfig`
+
+| 設定鍵 | 意圖 | 副作用 |
+|--------|------|--------|
+| `experimental.serverActions.bodySizeLimit` | 允許最大 4mb body | 影響所有 Server Actions 請求體上限 |
+| `serverExternalPackages` | 指定不打包、改由 Node runtime 載入的套件 | 影響 server 端 module resolution 與部署體積 |
+
+無公開函式；由 Next.js 在啟動/建置時讀取。
+
+## 依賴拓撲 (Dependency Topology)
+
+```
+Next.js Runtime
+    └── next.config.ts  （本模組：框架殼設定）
+            ├── 約束 → app/**（含 layout / page / api）
+            └── 外部套件白名單 → pi-ai、@vercel/queue
+```
+
+與本 bundle 關係：`layout` / `page` 執行於本設定所定義的 Next 殼層之上；`lib/config` 與本檔正交（env 業務設定 vs 框架設定）。
